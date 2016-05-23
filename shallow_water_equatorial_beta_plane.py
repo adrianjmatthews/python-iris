@@ -54,6 +54,9 @@ def space_filter(ff,weights,axis):
     ff_1=np.roll(ff,-1,axis=axis) # ff(i,j+1)
     ff_m1=np.roll(ff,1,axis=axis) # ff(i,j-1)
     ff_filt=afilt[0]*ff_m1+afilt[1]*ff+afilt[2]*ff_1
+
+    #  Need to add code to take account of y dimension not being periodic    
+    
     return ff_filt
     
 def create_cube(uu,vv,zz,tt):
