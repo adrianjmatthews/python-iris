@@ -3,7 +3,7 @@
 May 2016.  Moving from cdat to iris, and procedural to object oriented
 programming.
 
-ajm_classes will ultimately replace much of ajm_functions.
+data_analysis will ultimately replace much of ajm_functions.
 
 Programming style:
 
@@ -506,7 +506,7 @@ class DataConverter(object):
         # Set input file name and time constraint for current year
         if self.outfile_frequency=='year':
             if self.data_source in ['ncepdoe',]:
-                self.filein1=os.path.join(self.basedir,self.source,'raw_input/',self.var_name+'.'+str(self.year)+'.nc'
+                self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.'+str(self.year)+'.nc')
                 pdt1=PartialDateTime(year=self.year,month=1,day=1,hour=0,minute=0,second=0,microsecond=0)
                 pdt2=PartialDateTime(year=self.year,month=12,day=31,hour=23,minute=59,second=59,microsecond=999999)
                 time_constraint=iris.Constraint(time = lambda cell: pdt1 <= cell <= pdt2)
@@ -533,7 +533,7 @@ class DataConverter(object):
         """Write cube to netcdf file."""
         # Set output file name
         if self.outfile_frequency=='year':
-            self.fileout1=os.path.join(self.basedir,self.source,'raw_std/',self.var_name+'_'+str(self.level)+'_'+str(self.year)+'.nc'
+            self.fileout1=os.path.join(self.basedir,self.source,'raw_std/',self.var_name+'_'+str(self.level)+'_'+str(self.year)+'.nc')
         else:
             raise UserWarning("Need to write code for outfile_frequency other than 'year'.")
         # Write cube
