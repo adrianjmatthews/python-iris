@@ -3,7 +3,7 @@
 May 2016.  Moving from cdat to iris, and procedural to object oriented
 programming.
 
-ajm_classes will ultimately replace much of ajm_functions.
+data_analysis will ultimately replace much of ajm_functions.
 
 Programming style:
 
@@ -38,8 +38,10 @@ import os.path
 import mypaths
 import pdb
 
-h1='\n################################################################\n'
-h2='-------------------------------------------------\n'
+h1a='<<<=============================================================\n'
+h1b='=============================================================>>>\n'
+h2a='<<<---------------------------\n'
+h2b='--------------------------->>>\n'
 
 # var_name, standard_name pairs
 # var_name is used for file names and as the variable name in netcdf files
@@ -118,7 +120,10 @@ class TimeDomain(object):
     self.datetimes : datetime representation of timedomain.  A nested
     list of datetime objects.
 
-    self.type : either 'single' or 'event'
+    self.type : either 'single' or 'event'.
+
+    self.nevents : integer equivalent to length of self.lines, i.e., number
+    single times or events.
 
     """
     
@@ -137,9 +142,9 @@ class TimeDomain(object):
 
     def __str__(self):
         if self.verbose==2:
-            xx=h1+'TimeDomain({0.idx!s},basedir={0.basedir!s},verbose={0.verbose!s})'.format(self)
-            xx+='\n   filename={0.filename!s}'.format(self)
-            return xx
+            ss=h1a+'TimeDomain({0.idx!s},basedir={0.basedir!s},verbose={0.verbose!s}) \n'+\
+                'filename={0.filename!s} \n'+h1b
+            return ss.format(self)
         else:
             return self.__repr__()
 
@@ -152,9 +157,10 @@ class TimeDomain(object):
         self.lines=file1.readlines()
         file1.close()
         if self.verbose:
-            print(self.idx,"Created attribute 'lines'.")
-        if self.verbose==2:
-            print('   lines',self.lines)
+            ss='read_ascii:  {0.idx!s}: Created attribute "lines". \n'
+            if self.verbose==2:
+                ss+='   lines: {0.lines!s} \n'
+            print(ss.format(self))
 
     def write_ascii(self):
         """Write the ascii file for a newly created time domain."""
@@ -166,7 +172,8 @@ class TimeDomain(object):
             file1.writelines(self.lines)
             file1.close()
             if self.verbose:
-                print(self.idx,"Created ascii file.")
+                ss='write_ascii:  {0.idx!s}: Created ascii file. \n'
+                print(ss.format(self))
 
     def ascii2datetime(self):
         """Convert ascii representation of timedomain to datetime representation.
@@ -207,9 +214,10 @@ class TimeDomain(object):
             datetimes.append(datetimes_row)
         self.datetimes=datetimes
         if self.verbose:
-            print(self.idx,"Created attribute 'datetimes'.")
-        if self.verbose==2:
-            print('   datetimes',self.datetimes)
+            ss='ascii2datetime:  {0.idx!s}: Created attribute "datetimes". \n'
+            if self.verbose==2:
+                ss+='   datetimes: {0.datetimes!s} \n'
+            print(ss.format(self))
 
     def ascii2partial_date_time(self):
         """Convert ascii representation of timedomain to PartialDateTime representation.
@@ -222,7 +230,7 @@ class TimeDomain(object):
         except AttributeError:
             self.ascii2datetime()
             datetimes=self.datetimes
-        print ('datetimes',datetimes)
+        print('datetimes: {0!s}'.format(datetimes))
         # Convert datetime objects to PartialDateTime objects
         partial_date_times=[]
         for datetimes_row in datetimes:
@@ -234,9 +242,10 @@ class TimeDomain(object):
             partial_date_times.append(partial_date_times_row)
         self.partial_date_times=partial_date_times
         if self.verbose:
-            print(self.idx,"Created attribute 'partial_date_times'.")
-        if self.verbose==2:
-            print('   partial_date_times',self.partial_date_times)
+            ss='ascii2partial_date_time:  {0.idx!s}: Created attribute "partial_date_times". \n'
+            if self.verbose==2:
+                ss+='   partial_date_times: {0.partial_date_times!s} \n'
+            print(ss.format(self))
         
     def datetime2ascii(self):
         """Convert datetime representation of timedomain to ascii representation.
@@ -261,9 +270,10 @@ class TimeDomain(object):
             lines.append(lines_row)
         self.lines=lines
         if self.verbose:
-            print(self.idx,"Created attribute 'lines'.")
-        if self.verbose==2:
-            print('   lines',self.lines)
+            ss='read_ascii:  {0.idx!s}: Created attribute "lines". \n'
+            if self.verbose==2:
+                ss+='   lines: {0.lines!s} \n'
+            print(ss.format(self))
 
     def time_domain_type(self):
         """Determine if time domain is 'single' or 'event' type.
@@ -280,85 +290,14 @@ class TimeDomain(object):
         else:
             raise ValueError('Error: There must be either 1 or 2 times in each row.')
         if self.verbose:
-            print(self.idx,"Created attribute 'type'.")
-        if self.verbose==2:
-            print('   type',self.type)
+            ss='time_domain_type:  {0.idx!s}: Created attribute "type". \n'
+            if self.verbose==2:
+                ss+='   type: {0.type!s} \n'
+
+    def f_nevents(self):
+        self.nevents=len(self.datetimes)
 
 
-#==========================================================================
-
-class TimeDomStats(object):
-    """Time mean and other statistics of data over non-contiguous time domain.
-
-    """
-
-    def __init__(self,**descriptor):
-        """Initialise from descriptor dictionary."""
-        self.plot=False
-        self.ntimemin=5
-        self.__dict__.update(descriptor)
-        #self.descriptor=descriptor
-        #self.var_name=descriptor['var_name']
-        #self.name=var_name2standard_name[self.var_name]
-        #self.level=descriptor['level']
-        #self.source=descriptor['source']
-        #self.tdomainid=descriptor['tdomainid']
-        #self.filein1=descriptor['filein1']
-        #self.fileout1=descriptor['fileout1']
-        #if 'plot' in descriptor:
-        #    self.plot=descriptor['plot']
-        #else:
-        #    self.plot=False
-        #if 'ntimemin' in descriptor:
-        #    self.ntimemin=descriptor['ntimemin']
-        #else:
-        #    self.ntimemin=5
-        #self.verbose=verbose
-        if self.verbose:
-            print(self)
-        
-    def __repr__(self):
-        return 'TimeDomStats({0.descriptor!r},verbose={0.verbose!r})'.format(self)
-
-    def __str__(self):
-        if self.verbose==2:
-            return h1+"""TimeDomStats instance
-            var_name={0.var_name!s}
-            level={0.level!s}
-            source={0.source!s}
-            tdomainid={0.tdomainid!s}
-            filein1={0.filein1!s}
-            fileout1={0.fileout1!s}
-            ntimemin={0.ntimemin!s}""".format(self)
-        else:
-            return 'Statistics of '+self.source+' '+self.var_name+str(self.level)+' over '+self.tdomainid
-
-    def event_mean(self):
-        """Calculate time mean for each event in time domain."""
-        # Check that time domain is of type 'event'
-        self.tdomain.time_domain_type()
-        if self.tdomain.type!='event':
-            raise UserWarning("Warning: time domain type is '{0.tdomain.type}'.  It must be 'event'.".format(self))
-        # Loop over events in time domain
-        cube_events=[]
-        for eventc in self.tdomain.partial_date_times:
-            # Create time constraint
-            time_beg=eventc[0]
-            time_end=eventc[1]
-            print('time_beg',time_beg)
-            print('time_end',time_end)
-            time_constraint=iris.Constraint(time=lambda cell: time_beg <=cell<= time_end)
-            x1=iris.load(self.filein1,self.name)
-            with iris.FUTURE.context(cell_datetime_objects=True):
-                x2=x1.extract(time_constraint)
-            if(len(x2)>1):
-                raise UserWarning('cube list has len>1.  Need some extra code here! Use concatenate method?')
-            x3=x2[0]
-            x4=x3.collapsed('time',iris.analysis.MEAN)
-            cube_events.append(x4)
-        self.cube_events=cube_events
-        pdb.set_trace(); print '@@@ Stop here.'
-            
 #==========================================================================
 
 class DataConverter(object):
@@ -447,14 +386,7 @@ class DataConverter(object):
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
         self.level=descriptor['level']
-        if 'basedir' in descriptor:
-            self.basedir=descriptor['basedir']
-        else:
-            self.basedir=mypaths.DIR_DATA_DEFAULT
-        if 'plot' in descriptor:
-            self.plot=descriptor['plot']
-        else:
-            self.plot=False
+        self.basedir=descriptor['basedir']
         self.verbose=verbose
         if self.verbose:
             print(self)
@@ -464,11 +396,12 @@ class DataConverter(object):
 
     def __str__(self):
         if self.verbose==2:
-            return h1+"""DataConverter instance
-            source={0.source!s}
-            var_name={0.var_name!s}
-            name={0.name!s}
-            level={0.level!s}""".format(self)
+            ss=h1a+'DataConverter instance \n'+\
+                'source: {0.source!s} \n'+\
+                'var_name: {0.var_name!s} \n'+\
+                'name: {0.name!s} \n'+\
+                'level: {0.level!s} \n'+h1b
+            return ss.format(self)
         else:
             return self.__repr__()
 
@@ -490,13 +423,13 @@ class DataConverter(object):
             self.outfile_frequency='year'
         # Printed output
         if self.verbose:
-            print(self.source,"Created attributes 'data_source', 'level_type', 'frequency', 'outfile_frequency'.")
-        if self.verbose==2:
-            print('   data_source',self.data_source)
-            print('   level_type',self.level_type)
-            print('   frequency',self.frequency)
-            print('   outfile_frequency',self.outfile_frequency)
-
+            ss=h2a+'source_info.  Created attributes: \n'+\
+                'data source: {0.data_source!s} \n'+\
+                'level_type: {0.level_type!s} \n'+\
+                'frequency: {0.frequency!s} \n'+\
+                'outfile_frequency {0.outfile_frequency!s} \n'+h2b
+            print(ss.format(self))
+                
     def read_cube(self):
         """Read cube from raw input file.
 
@@ -506,7 +439,7 @@ class DataConverter(object):
         # Set input file name and time constraint for current year
         if self.outfile_frequency=='year':
             if self.data_source in ['ncepdoe',]:
-                self.filein1=os.path.join(self.basedir,self.source,'raw_input/',self.var_name+'.'+str(self.year)+'.nc'
+                self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.'+str(self.year)+'.nc')
                 pdt1=PartialDateTime(year=self.year,month=1,day=1,hour=0,minute=0,second=0,microsecond=0)
                 pdt2=PartialDateTime(year=self.year,month=12,day=31,hour=23,minute=59,second=59,microsecond=999999)
                 time_constraint=iris.Constraint(time = lambda cell: pdt1 <= cell <= pdt2)
@@ -516,25 +449,255 @@ class DataConverter(object):
         if self.data_source in ['ncepdoe',] and self.level_type=='plev':
             level_constraint=iris.Constraint(Level=self.level)
         # Load cube
-        self.cube=iris.load_cube(self.filein1,self.name)
+        self.cube=iris.load_cube(self.filein1,self.name,callback=self.clean_callback)
         xx=self.cube.coord('time')
         xx.bounds=None # Hack for new netcdf4 ncepdoe which have physically implausible time bounds
         with iris.FUTURE.context(cell_datetime_objects=True):
             self.cube=self.cube.extract(level_constraint & time_constraint)
+        if self.verbose==2:
+            ss=h2a+'read_cube. \n'+\
+                'pdt1: {0!s} \n'+\
+                'pdt2: {1!s} \n'+h2b
+            print(ss.format(pdt1,pdt2))
         
+    def clean_callback(self,cube,field,filename):
+        """Deletes some attributes on iris load.
+        
+        Problem.  iris concatenate and merge (to create a single cube
+        from a cube list) is very picky and will fail if there are any
+        mismatching metadata between the cubes.  This function removes
+        attributes from the time coordinate and basic metadata that
+        typically fall foul of this.  These attributes are not useful anyway.
+        
+        Usage: as an argument in iris load  (...,callback=clean_callback).
+
+        Do this cleaning here in preprocessing so subsequent analysis
+        does not have to contend with this.
+        
+        """
+        # Delete the problem attribute from the time coordinate:
+        del cube.coord('time').attributes['actual_range']
+        # Or set the attributes dictionary of the time coordinate to empty:
+        #cube.coord('time').attributes = {}
+        
+        # Similarly delete some of the main attributes
+        for attribute in ['actual_range','history','unpacked_valid_range']:
+            if attribute in cube.attributes:
+                del cube.attributes[attribute]
+
     def format_cube(self):
         """Change cube to standard format."""
         # Set self.cube.var_name to self.var_name
         if self.cube.var_name!=self.var_name:
             self.cube.varn_name=self.var_name
-            print('Changed {0.cube.var_name!s} to {0.var_name!s}'.format(self))
+            print('format_cube: Changed {0.cube.var_name!s} to {0.var_name!s}'.format(self))
 
     def write_cube(self):
         """Write cube to netcdf file."""
         # Set output file name
         if self.outfile_frequency=='year':
-            self.fileout1=os.path.join(self.basedir,self.source,'raw_std/',self.var_name+'_'+str(self.level)+'_'+str(self.year)+'.nc'
+            self.fileout1=os.path.join(self.basedir,self.source,'raw_std/',self.var_name+'_'+str(self.level)+'_'+str(self.year)+'.nc')
         else:
             raise UserWarning("Need to write code for outfile_frequency other than 'year'.")
         # Write cube
         iris.save(self.cube,self.fileout1)
+        if self.verbose==2:
+            print('write_cube: {0.fileout1!s}'.format(self))
+
+#==========================================================================
+
+class TimeDomStats(object):
+    """Time mean and other statistics of data over non-contiguous time domain.
+
+    """
+
+    def __init__(self,descriptor,verbose=False):
+        """Initialise from descriptor dictionary."""
+        self.ntimemin=5
+        self.__dict__.update(descriptor)
+        self.descriptor=descriptor
+        self.var_name=descriptor['var_name']
+        self.name=var_name2standard_name[self.var_name]
+        self.level=descriptor['level']
+        self.source=descriptor['source']
+        self.tdomainid=descriptor['tdomainid']
+        self.filein1=descriptor['filein1']
+        self.fileout1=descriptor['fileout1']
+        if 'ntimemin' in descriptor:
+            self.ntimemin=descriptor['ntimemin']
+        else:
+            self.ntimemin=5
+        self.verbose=verbose
+        self.tdomain=TimeDomain(self.tdomainid,verbose=self.verbose)
+        self.tdomain.read_ascii()
+        self.tdomain.ascii2partial_date_time()
+        self.tdomain.f_nevents()
+        if self.verbose:
+            print(self)
+        
+    def __repr__(self):
+        return 'TimeDomStats({0.descriptor!r},verbose={0.verbose!r})'.format(self)
+
+    def __str__(self):
+        if self.verbose==2:
+            ss=h1a+'TimeDomStats instance \n'+\
+                'var_name: {0.var_name!s} \n'+\
+                'level: {0.level!s} \n'+\
+                'source: {0.source!s} \n'+\
+                'tdomainid: {0.tdomainid!s} \n'+\
+                'filein1: {0.filein1!s} \n'+\
+                'fileout1: {0.fileout1!s} \n'+\
+                'ntimemin:{0.ntimemin!s} \n'+h1b
+            return ss.format(self)
+        else:
+            return 'Statistics of '+self.source+' '+self.var_name+str(self.level)+' over '+self.tdomainid
+
+    def event_means(self):
+        """Calculate time mean and ntime for each event in time domain.
+
+        Create cube_event_means and cube_event_ntimes attributes."""
+        # Check that time domain is of type 'event'
+        self.tdomain.time_domain_type()
+        if self.tdomain.type!='event':
+            raise UserWarning("Warning: time domain type is '{0.tdomain.type}'.  It must be 'event'.".format(self))
+        # Load list of cubes
+        x1=iris.load(self.filein1,self.name)
+        # Loop over events in time domain
+        cube_event_means=[]
+        cube_event_ntimes=[]
+        for eventc in self.tdomain.partial_date_times:
+            # Create time constraint
+            time_beg=eventc[0]
+            time_end=eventc[1]
+            print('time_beg: {0!s}'.format(time_beg))
+            print('time_end: {0!s}'.format(time_end))
+            time_constraint=iris.Constraint(time=lambda cell: time_beg <=cell<= time_end)
+            with iris.FUTURE.context(cell_datetime_objects=True):
+                x2=x1.extract(time_constraint)
+            x3=x2.concatenate_cube()
+            ntime=x3.coord('time').shape[0]
+            cube_event_ntimes.append(ntime)
+            x4=x3.collapsed('time',iris.analysis.MEAN)
+            cube_event_means.append(x4)
+        self.cube_event_means=cube_event_means
+        self.cube_event_ntimes=cube_event_ntimes
+
+    def f_time_mean(self):
+        """Calculate time mean over time domain and save to netcdf.
+
+        Calculate this by a weighted (cube_event_ntimes) mean of the
+        cube_event_means.  Hence, each individual time (e.g., day) in the
+        original data has equal weighting.
+
+        Create attribute time_mean"""
+        # Contribution from first event mean
+        ntime_total=0
+        ntime=self.cube_event_ntimes[0]
+        x1=self.cube_event_means[0]*float(ntime)
+        ntime_total+=ntime
+        # Contribution from remaining events
+        if self.tdomain.nevents>1:
+            for ievent in range(1,self.tdomain.nevents):
+                ntime=self.cube_event_ntimes[ievent]
+                x1+=self.cube_event_means[ievent]*float(ntime)
+                ntime_total+=ntime
+        # Calculate mean
+        time_mean=x1/float(ntime_total)
+        time_mean.standard_name=self.name
+        self.time_mean=time_mean
+        iris.save(self.time_mean,self.fileout1)
+            
+#==========================================================================
+
+class Filter(object):
+    """Time filter.
+
+    Assumes input data has equally spaced time intervals
+
+    Attributes:
+
+    self.weights : 1-d numpy array of filter weights
+
+    self.nn : integer value of order of filter.
+
+    self.nweights : integer number of weights (length of self.weights
+    array.  Equal to 2*self.nn+1, and is therefore odd.
+
+    self.deltat_value: float value of fixed, constant time interval of
+    input (and output filtered) data, e.g., 1.0, 3.0.
+
+    self.deltat_units: string units of time interval, e.g., 'days',
+    'hours'.
+
+    self.data_out : iris cube of output data.  Length of time
+    dimension is typically a convenient block of time, e.g., 1 year
+    for daily data.
+
+    self.timeout1 : datetime object for start time of self.data_out.
+    
+    self.timeout2 : datetime object for end time of
+    self.data_out.
+    
+    self.data_in : iris cube of input data to be filtered.  Length of
+    time dimension is length of time dimension of self.data_out +
+    2*self.nn (self.nn at the beginning, and self.nn at the end).
+    
+    self.timein1 : datetime object for start time of self.data_in.
+    
+    self.timein2 : datetime object for end time of
+    self.data_in.
+    
+    """
+    def __init__(self,weights,times,descriptor,verbose=False):
+        self.weights=weights
+        self.timeout1=times[0]
+        self.timeout2=times[1]
+        self.descriptor=descriptor
+        self.filein1=descriptor['filein1']
+        self.fileout1=descriptor['fileout1']
+        self.var_name=descriptor['var_name']
+        self.name=var_name2standard_name[self.var_name]
+        # Find nweights, nn
+        self.nweights=self.weights.shape[0]
+        self.nn=(self.nweights-1)/2
+        if self.nn!=(self.nweights-1)/2.:
+            raise UserWarning('nweights must be odd.')
+        # Find time interval of input data
+        self.cubes=iris.load(self.filein1,self.name)
+        time_coord=self.cubes[0].coord('time')
+        self.deltat_units=str(time_coord.units).split[0]
+        self.deltat_value=time_coord.points[1]-time_coord.points[0]
+        # Calculate start and end time of input data
+        if self.delta_units=='days':
+            timedelta=datetime.delta(days=self.deltat_value)
+        elif self.delta_units=='hours':
+            timedelta=datetime.delta(hours=self.deltat_value)
+        else:
+            raise UserWarning('delta_units is not days or hours - need more code!')
+        self.timein1=self.timeout1-timedelta
+        self.timein2=self.timeout2+timedelta
+        
+
+    def __repr__(self):
+        return 'Filter({0.descriptor!r},verbose={0.verbose!r})'.format(self)
+
+    def __str__(self):
+        if self.verbose==2:
+            ss=h1a+'Filter instance \n'+\
+                'filein1: {0.filein1!s} \n'+\
+                'fileout1: {0.fileout1!s} \n'+\
+                'timein1: {0.timein1!s} \n'+\
+                'timeout1: {0.timeout1!s} \n'+\
+                'timeout2: {0.timeout2!s} \n'+\
+                'timein2: {0.timein2!s} \n'+\
+                'nn: {0.nn!s} \n'+\
+                'nweights: {0.nweights!s} \n'+\
+                'time interval: {0.deltat_value!s} {0.deltat_units!s} \n'+h1b
+            return(ss.format(self))
+        else:
+            return 'Filter instance'
+
+
+    def filter(self):
+        """Filter using the rolling_window cube method."""
+
