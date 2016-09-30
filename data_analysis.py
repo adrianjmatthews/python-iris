@@ -37,6 +37,7 @@ import datetime
 import os.path
 import mypaths
 import pdb
+import numpy
 
 h1a='<<<=============================================================\n'
 h1b='=============================================================>>>\n'
@@ -609,7 +610,7 @@ class TimeDomStats(object):
             
 #==========================================================================
 
-class Filter(object):
+class TimeFilter(object):
     """Time filter.
 
     Assumes input data has equally spaced time intervals
@@ -621,22 +622,24 @@ class Filter(object):
     self.nn : integer value of order of filter.
 
     self.nweights : integer number of weights (length of self.weights
-    array.  Equal to 2*self.nn+1, and is therefore odd.
+    array.  Must be odd.  Filtered output will be a nweight running
+    mean of the input data, using self.weights.
 
-    self.deltat_value: float value of fixed, constant time interval of
-    input (and output filtered) data, e.g., 1.0, 3.0.
+    self.nn : Equal to (nweights-1)/2, e.g., if nweights=61, nn=30.
+    Filtered output will be a 61-point weighted mean of the 30 input
+    data points before the current time, the current time itself, and
+    the 30 intput data points after the current time.
 
-    self.deltat_units: string units of time interval, e.g., 'days',
-    'hours'.
-
-    self.data_out : iris cube of output data.  Length of time
+    self.data_out : iris cube of filtered output data.  Length of time
     dimension is typically a convenient block of time, e.g., 1 year
     for daily data.
 
+    self.frequency : string to denote frequency of input (and output)
+    data, e.g., 'd' for daily data.
+
     self.timeout1 : datetime object for start time of self.data_out.
     
-    self.timeout2 : datetime object for end time of
-    self.data_out.
+    self.timeout2 : datetime object for end time of self.data_out.
     
     self.data_in : iris cube of input data to be filtered.  Length of
     time dimension is length of time dimension of self.data_out +
@@ -644,39 +647,40 @@ class Filter(object):
     
     self.timein1 : datetime object for start time of self.data_in.
     
-    self.timein2 : datetime object for end time of
-    self.data_in.
+    self.timein2 : datetime object for end time of self.data_in.
+
+    self.filein1 : path name for file(s) of input data.
+    
+    self.fileout1 : path name for file of output (filtered) data.
     
     """
-    def __init__(self,weights,times,descriptor,verbose=False):
-        self.weights=weights
-        self.timeout1=times[0]
-        self.timeout2=times[1]
+    def __init__(self,descriptor,verbose=False):
         self.descriptor=descriptor
+        self.verbose=verbose
+        self.filter=descriptor['filter']
+        self.file_weights=descriptor['file_weights']
+        self.f_weights()
+        self.timeout1=descriptor['times'][0]
+        self.timeout2=descriptor['times'][1]
         self.filein1=descriptor['filein1']
         self.fileout1=descriptor['fileout1']
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
-        # Find nweights, nn
-        self.nweights=self.weights.shape[0]
-        self.nn=(self.nweights-1)/2
-        if self.nn!=(self.nweights-1)/2.:
-            raise UserWarning('nweights must be odd.')
-        # Find time interval of input data
-        self.cubes=iris.load(self.filein1,self.name)
-        time_coord=self.cubes[0].coord('time')
-        self.deltat_units=str(time_coord.units).split[0]
-        self.deltat_value=time_coord.points[1]-time_coord.points[0]
+        self.source=descriptor['source']
         # Calculate start and end time of input data
-        if self.delta_units=='days':
-            timedelta=datetime.delta(days=self.deltat_value)
-        elif self.delta_units=='hours':
-            timedelta=datetime.delta(hours=self.deltat_value)
+        # Time interval of data is encoded in source e.g., ncep_plev_d
+        xx=self.source.split('_')
+        self.frequency=xx[2]
+        if self.frequency=='d':
+            timedelta=datetime.timedelta(days=self.nn)
+        elif self.frequency=='h':
+            timedelta=datetime.timedelta(hours=self.nn)
         else:
-            raise UserWarning('delta_units is not days or hours - need more code!')
+            raise UserWarning('data time interval is not days or hours - need more code!')
         self.timein1=self.timeout1-timedelta
         self.timein2=self.timeout2+timedelta
-        
+        if self.verbose:
+            print(self)        
 
     def __repr__(self):
         return 'Filter({0.descriptor!r},verbose={0.verbose!r})'.format(self)
@@ -684,20 +688,63 @@ class Filter(object):
     def __str__(self):
         if self.verbose==2:
             ss=h1a+'Filter instance \n'+\
+                'filter: {0.filter!s} \n'+\
+                'nn: {0.nn!s} \n'+\
+                'nweights: {0.nweights!s} \n'+\
+                'weights: {0.weights!s} \n'+\
                 'filein1: {0.filein1!s} \n'+\
                 'fileout1: {0.fileout1!s} \n'+\
+                'frequency: {0.frequency!s} \n'+\
                 'timein1: {0.timein1!s} \n'+\
                 'timeout1: {0.timeout1!s} \n'+\
                 'timeout2: {0.timeout2!s} \n'+\
-                'timein2: {0.timein2!s} \n'+\
-                'nn: {0.nn!s} \n'+\
-                'nweights: {0.nweights!s} \n'+\
-                'time interval: {0.deltat_value!s} {0.deltat_units!s} \n'+h1b
+                'timein2: {0.timein2!s} \n'+h1b
             return(ss.format(self))
         else:
             return 'Filter instance'
 
+    def f_weights(self):
+        """Create array of file weights.
 
-    def filter(self):
-        """Filter using the rolling_window cube method."""
+        Read in file weights from ASCII text file.  Must be in format:
+        Line 0: information on filter (not actually used here)
+        Remaining lines: each line has a single float filter weight.
 
+        If nlines is number of lines in the filter file, there are
+        nweights=nlines-1 filter weights.
+
+        nweights must be odd.
+
+        nn=(nfilter-1)/2
+
+        Create nweights, nn and weights attributes.
+        """
+        
+        # Read ASCII filter weights
+        f1=open(self.file_weights)
+        lines=f1.readlines()
+        # Discard first (information) line
+        lines2=lines[1:]
+        self.nweights=len(lines2)
+        # Check nweights is odd
+        if divmod(self.nweights,2)[1]!=1:
+            raise UserWarning('Error: self.nweights must be odd.')
+        self.nn=divmod(self.nweights,2)[0]
+        weights=[float(xx) for xx in lines2]
+        self.weights=numpy.array(weights)
+
+
+    def time_filter(self):
+        """Filter using the rolling_window cube method and save data."""
+
+        # Read in input data
+        x1=iris.load(self.filein1,self.name)
+        time_constraint=iris.Constraint(time=lambda cell: self.timein1 <=cell<= self.timein2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x2=x1.extract(time_constraint)
+        self.data_in=x2.concatenate_cube()
+        # Apply filter
+        self.data_out=self.data_in.rolling_window('time',
+              iris.analysis.MEAN,self.nweights,weights=self.weights)
+        # Save data
+        iris.save(self.data_out,self.fileout1)
