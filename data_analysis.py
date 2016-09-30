@@ -67,6 +67,33 @@ var_name2standard_name={
 
 #==========================================================================
 
+def source_info(self):
+    """Create attributes based on the source attribute."""
+    # Split source attribute string using underscores as separators
+    xx=self.source.split('_')
+    if len(xx)!=3:
+        raise UserWarning("source attribute '{0.source!s}' must have three parts separated by underscores".format(self))
+    self.data_source=xx[0]
+    self.level_type=xx[1]
+    self.frequency=xx[2]
+    # Check data_source attribute is valid
+    valid_data_sources=['ncepdoe',]
+    if self.data_source not in valid_data_sources:
+        raise UserWarning('data_source {0.data_source!s} not vaild'.format(self))
+    # Set outfile_frequency attribute depending on source information
+    if self.data_source in ['ncepdoe',]:
+        self.outfile_frequency='year'
+    # Printed output
+    if self.verbose:
+        ss=h2a+'source_info.  Created attributes: \n'+\
+            'data source: {0.data_source!s} \n'+\
+            'level_type: {0.level_type!s} \n'+\
+            'frequency: {0.frequency!s} \n'+\
+            'outfile_frequency {0.outfile_frequency!s} \n'+h2b
+        print(ss.format(self))
+                
+#==========================================================================
+
 class TimeDomain(object):
     """A set of single or paired (start,end) times.
 
@@ -383,12 +410,13 @@ class DataConverter(object):
     def __init__(self,descriptor,verbose=True):
         """Initialise from descriptor dictionary."""
         self.descriptor=descriptor
+        self.verbose=verbose
         self.source=descriptor['source']
+        source_info(self)
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
         self.level=descriptor['level']
         self.basedir=descriptor['basedir']
-        self.verbose=verbose
         if self.verbose:
             print(self)
         
@@ -683,11 +711,11 @@ class TimeFilter(object):
             print(self)        
 
     def __repr__(self):
-        return 'Filter({0.descriptor!r},verbose={0.verbose!r})'.format(self)
+        return 'TimeFilter({0.descriptor!r},verbose={0.verbose!r})'.format(self)
 
     def __str__(self):
         if self.verbose==2:
-            ss=h1a+'Filter instance \n'+\
+            ss=h1a+'TimeFilter instance \n'+\
                 'filter: {0.filter!s} \n'+\
                 'nn: {0.nn!s} \n'+\
                 'nweights: {0.nweights!s} \n'+\
@@ -701,7 +729,7 @@ class TimeFilter(object):
                 'timein2: {0.timein2!s} \n'+h1b
             return(ss.format(self))
         else:
-            return 'Filter instance'
+            return 'TimeFilter instance'
 
     def f_weights(self):
         """Create array of file weights.
@@ -748,3 +776,99 @@ class TimeFilter(object):
               iris.analysis.MEAN,self.nweights,weights=self.weights)
         # Save data
         iris.save(self.data_out,self.fileout1)
+
+#==========================================================================
+
+class AnnualCycle(object):
+    """Calculate and subtract annual cycle.
+
+    Assumes input data has equally spaced time intervals.
+
+    Attributes:
+
+    self.frequency : string to denote frequency of input (and output)
+    data, e.g., 'd' for daily data.
+
+    self.year1 and self.year2 : integers.  The annual cycle will be
+    calculated using input data from 0000:00 UTC 1 Jan self.year1 to
+    2359:59 31 Dec self.year2.
+
+    self.data_in : iris cube list of all input data
+
+    self.data_anncycle_raw : iris cube of 'raw' annual cycle.  The
+    data for e.g. 5 Jan is a simple mean of all the input data for 5
+    Jan.
+
+    self.data_anncycle_smooth : iris cube of smoothed annual cycle.
+    Calculated from mean plus first self.nharm annual harmonics of
+    self.data_anncycle_raw.
+
+    self.nharm : integer number of annual harmonics to retain for
+    smoothed annual cycle.
+
+    self.year_current : integer current year for which annual cycle is
+    being removed.
+
+    self.data_anncycle_rm : iris cube of output data with annual cycle
+    removed.  Usually the time dimension will run for one complete
+    year (self.year_current) from 1 Jan to 31 Dec (cannot be more than
+    this, i.e., data is to be processed in blocks of 1 year).
+    However, the first and last years of input data may be incomplete,
+    and allowance is made for this.
+    
+    self.filein1 : path name for file(s) of input data.
+    
+    self.fileout_anncycle_raw : path name for file of output raw
+    annual cycle.
+    
+    self.fileout_anncycle_smooth : path name for file of output
+    smoothed annual cycle.
+    
+    self.fileout_anncycle_rm : path name for file of output data with
+    smoothed annual cycle subtracted.
+    
+    """
+    def __init__(self,descriptor,verbose=False):
+        self.descriptor=descriptor
+        self.verbose=verbose
+        self.filein1=descriptor['filein1']
+        self.fileout_anncycle_raw=descriptor['fileout_anncycle_raw']
+        self.fileout_anncycle_smooth=descriptor['fileout_anncycle_smooth']
+        self.var_name=descriptor['var_name']
+        self.name=var_name2standard_name[self.var_name]
+        self.source=descriptor['source']
+        source_info(self)
+        self.year1=descriptor['year1']
+        self.year2=descriptor['year2']
+        self.data_in=iris.load(self.filein1,self.name)
+        if self.verbose:
+            print(self)        
+
+    def __repr__(self):
+        return 'AnnualCycle({0.descriptor!r},verbose={0.verbose!r})'.format(self)
+
+    def __str__(self):
+        if self.verbose==2:
+            ss=h1a+'AnnualCycle instance \n'+\
+                'year1: {0.year1!s} \n'+\
+                'year2: {0.year2!s} \n'+\
+                'filein1: {0.filein1!s} \n'+\
+                'data_in: {0.data_in!s} \n'+\
+                'fileout_anncycle_raw: {0.fileout_anncycle_raw!s} \n'+\
+                'fileout_anncycle_smooth: {0.fileout_anncycle_smooth!s} \n'+h1b
+            return(ss.format(self))
+        else:
+            return 'AnnualCycle instance'
+
+    def f_anncycle_raw(self):
+        """Create raw annual cycle."""
+
+        # Loop over days of year
+
+        # Read input data
+        time1=datetime.datetime(year=self.year1,month=1,day=1,hour=0,minute=0,second=0)
+        time2=datetime.datetime(year=self.year2,month=12,day=31,hour=23,minute=59,second=59)
+        time_constraint=iris.Constraint(time=lambda cell: time1 <=cell<= time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x2=x1.extract(time_constraint)
+        self.data_in=x2.concatenate_cube()
