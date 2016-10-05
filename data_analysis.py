@@ -94,6 +94,32 @@ def source_info(self):
                 
 #==========================================================================
 
+def clean_callback(cube,field,filename):
+    """Deletes some attributes on iris load.
+    
+    Problem.  iris concatenate and merge (to create a single cube
+    from a cube list) is very picky and will fail if there are any
+    mismatching metadata between the cubes.  This function removes
+    attributes from the time coordinate and basic metadata that
+    typically fall foul of this.  These attributes are not useful anyway.
+    
+    Usage: as an argument in iris load  (...,callback=clean_callback).
+    
+    """
+    # Delete the problem attribute from the time coordinate:
+    for attribute in ['actual_range']:
+        if attribute in cube.coord('time').attributes:
+            del cube.coord('time').attributes['actual_range']
+    # Or set the attributes dictionary of the time coordinate to empty:
+    #cube.coord('time').attributes = {}
+    
+    # Similarly delete some of the main attributes
+    for attribute in ['actual_range','history','unpacked_valid_range','references','References','dataset_title']:
+        if attribute in cube.attributes:
+            del cube.attributes[attribute]
+
+#==========================================================================
+
 class TimeDomain(object):
     """A set of single or paired (start,end) times.
 
@@ -478,7 +504,7 @@ class DataConverter(object):
         if self.data_source in ['ncepdoe',] and self.level_type=='plev':
             level_constraint=iris.Constraint(Level=self.level)
         # Load cube
-        self.cube=iris.load_cube(self.filein1,self.name,callback=self.clean_callback)
+        self.cube=iris.load_cube(self.filein1,self.name,callback=clean_callback)
         xx=self.cube.coord('time')
         xx.bounds=None # Hack for new netcdf4 ncepdoe which have physically implausible time bounds
         with iris.FUTURE.context(cell_datetime_objects=True):
@@ -489,31 +515,6 @@ class DataConverter(object):
                 'pdt2: {1!s} \n'+h2b
             print(ss.format(pdt1,pdt2))
         
-    def clean_callback(self,cube,field,filename):
-        """Deletes some attributes on iris load.
-        
-        Problem.  iris concatenate and merge (to create a single cube
-        from a cube list) is very picky and will fail if there are any
-        mismatching metadata between the cubes.  This function removes
-        attributes from the time coordinate and basic metadata that
-        typically fall foul of this.  These attributes are not useful anyway.
-        
-        Usage: as an argument in iris load  (...,callback=clean_callback).
-
-        Do this cleaning here in preprocessing so subsequent analysis
-        does not have to contend with this.
-        
-        """
-        # Delete the problem attribute from the time coordinate:
-        del cube.coord('time').attributes['actual_range']
-        # Or set the attributes dictionary of the time coordinate to empty:
-        #cube.coord('time').attributes = {}
-        
-        # Similarly delete some of the main attributes
-        for attribute in ['actual_range','history','unpacked_valid_range']:
-            if attribute in cube.attributes:
-                del cube.attributes[attribute]
-
     def format_cube(self):
         """Change cube to standard format."""
         # Set self.cube.var_name to self.var_name
@@ -529,7 +530,8 @@ class DataConverter(object):
         else:
             raise UserWarning("Need to write code for outfile_frequency other than 'year'.")
         # Write cube
-        iris.save(self.cube,self.fileout1)
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.cube,self.fileout1)
         if self.verbose==2:
             print('write_cube: {0.fileout1!s}'.format(self))
 
@@ -634,7 +636,8 @@ class TimeDomStats(object):
         time_mean=x1/float(ntime_total)
         time_mean.standard_name=self.name
         self.time_mean=time_mean
-        iris.save(self.time_mean,self.fileout1)
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.time_mean,self.fileout1)
             
 #==========================================================================
 
@@ -775,7 +778,8 @@ class TimeFilter(object):
         self.data_out=self.data_in.rolling_window('time',
               iris.analysis.MEAN,self.nweights,weights=self.weights)
         # Save data
-        iris.save(self.data_out,self.fileout1)
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.data_out,self.fileout1)
 
 #==========================================================================
 
@@ -818,11 +822,10 @@ class AnnualCycle(object):
     
     self.filein1 : path name for file(s) of input data.
     
-    self.fileout_anncycle_raw : path name for file of output raw
-    annual cycle.
+    self.file_anncycle_raw : path name for file of raw annual cycle.
     
-    self.fileout_anncycle_smooth : path name for file of output
-    smoothed annual cycle.
+    self.file_anncycle_smooth : path name for file of smoothed annual
+    cycle.
     
     self.fileout_anncycle_rm : path name for file of output data with
     smoothed annual cycle subtracted.
@@ -832,8 +835,8 @@ class AnnualCycle(object):
         self.descriptor=descriptor
         self.verbose=verbose
         self.filein1=descriptor['filein1']
-        self.fileout_anncycle_raw=descriptor['fileout_anncycle_raw']
-        self.fileout_anncycle_smooth=descriptor['fileout_anncycle_smooth']
+        self.file_anncycle_raw=descriptor['file_anncycle_raw']
+        self.file_anncycle_smooth=descriptor['file_anncycle_smooth']
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
         self.source=descriptor['source']
@@ -854,21 +857,74 @@ class AnnualCycle(object):
                 'year2: {0.year2!s} \n'+\
                 'filein1: {0.filein1!s} \n'+\
                 'data_in: {0.data_in!s} \n'+\
-                'fileout_anncycle_raw: {0.fileout_anncycle_raw!s} \n'+\
-                'fileout_anncycle_smooth: {0.fileout_anncycle_smooth!s} \n'+h1b
+                'file_anncycle_raw: {0.file_anncycle_raw!s} \n'+\
+                'file_anncycle_smooth: {0.file_anncycle_smooth!s} \n'+h1b
             return(ss.format(self))
         else:
             return 'AnnualCycle instance'
 
     def f_anncycle_raw(self):
-        """Create raw annual cycle."""
+        """Create raw annual cycle and write to file.
 
+        This will be assigned to year 1, i.e. AD 1.  NB year 1 is not
+        a leap year.
+
+        Create data_anncycle_raw attribute.
+        """
+
+        if self.frequency!='d':
+            raise UserWarning('Annual cycle presently only coded up for daily data.')
+        # Set first day as 1 Jan year 1 (time coord will be relative to this)
+        time_first=datetime.datetime(year=1,month=1,day=1)
+        # Set current time to be 1 Jan year 1.
+        time_sample=datetime.datetime(year=1,month=1,day=1)
+        # Set last time to loop over to be 31 Dec year 1.
+        #time_sample_last=datetime.datetime(year=1,month=12,day=31)
+        time_sample_last=datetime.datetime(year=1,month=1,day=3)
+        # Time increment for annual cycle is 1 day
+        timedelta=datetime.timedelta(days=1)
+        # Create empty CubeList for annual cycle
+        x10=iris.cube.CubeList([])
+        # Create time constraint to only use data between self.year1 and self.year2
+        pdt1=PartialDateTime(year=self.year1)
+        pdt2=PartialDateTime(year=self.year2)
+        time_constraint_range=iris.Constraint(time=lambda cell: pdt1<=cell<=pdt2)
         # Loop over days of year
+        while time_sample<=time_sample_last:
+            # Extract all data for current day of year
+            pdtc=PartialDateTime(month=time_sample.month,day=time_sample.day)
+            time_constraintc=iris.Constraint(time=pdtc)
+            with iris.FUTURE.context(cell_datetime_objects=True):
+                x1=self.data_in.extract(time_constraint_range & time_constraintc)
+            x2=x1.merge_cube()
+            # Calculate mean for current day of year
+            x3=x2.collapsed('time',iris.analysis.MEAN)
+            # Add a cell method to describe this action in more detail
+            cm=iris.coords.CellMethod('mean','time',comments='raw annual cycle '+str(self.year1)+'-'+str(self.year2))
+            x3.add_cell_method(cm)
+            # Remove now inappropriate time coordinate
+            x3.remove_coord('time')
+            # Add auxilliary time coordinate for current day of year
+            time_diff=time_sample-time_first
+            time_val=time_diff.days
+            time_units='days since '+str(time_first)
+            tcoord=iris.coords.DimCoord(time_val,standard_name='time',units=time_units)
+            x3.add_aux_coord(tcoord)
+            # Append mean for current day of year to annual cycle
+            x10.append(x3)
+            print(time_sample,time_val)
+            # Increment day of year
+            time_sample+=timedelta
+        x11=x10.merge_cube()
+        self.data_anncycle_raw=x11
+        # Save raw annual cycle
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.data_anncycle_raw,self.file_anncycle_raw)
 
-        # Read input data
-        time1=datetime.datetime(year=self.year1,month=1,day=1,hour=0,minute=0,second=0)
-        time2=datetime.datetime(year=self.year2,month=12,day=31,hour=23,minute=59,second=59)
-        time_constraint=iris.Constraint(time=lambda cell: time1 <=cell<= time2)
-        with iris.FUTURE.context(cell_datetime_objects=True):
-            x2=x1.extract(time_constraint)
-        self.data_in=x2.concatenate_cube()
+    def f_read_anncycle_raw(self):
+        """Read raw annual cycle.
+
+        Create data_anncycle_raw attribute.
+        """
+
+        self.data_anncycle_raw=iris.load_cube(self.file_anncycle_raw,self.name)
