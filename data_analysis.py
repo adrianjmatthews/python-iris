@@ -150,6 +150,29 @@ def clean_callback(cube,field,filename):
 
 #==========================================================================
 
+def create_cube(array,oldcube):
+    """Create an iris cube from a numpy array and attributes from an old cube.
+
+    Return newcube.
+    """
+    # Check that array and oldcube have same dimensions
+    if array.shape!=oldcube.shape:
+        raise UserWarning('Shape of array and oldcube must match.')
+    # Create a list of two-lists, each of form [dim_coord,index]
+    kdim=0
+    dim_coords=[]
+    for xx in oldcube.dim_coords:
+        dim_coords.append([xx,kdim])
+        kdim+=1
+    # Create cube
+    newcube=iris.cube.Cube(array,standard_name=oldcube.standard_name,var_name=oldcube.var_name,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
+    # Add aux coords
+    for xx in oldcube.aux_coords:
+        newcube.add_aux_coord(xx)
+    return newcube
+
+#==========================================================================
+
 class TimeDomain(object):
     """A set of single or paired (start,end) times.
 
@@ -873,6 +896,7 @@ class AnnualCycle(object):
         source_info(self)
         self.year1=descriptor['year1']
         self.year2=descriptor['year2']
+        self.nharm=descriptor['nharm']
         self.data_in=iris.load(self.filein1,self.name)
         if self.verbose:
             print(self)        
@@ -885,6 +909,7 @@ class AnnualCycle(object):
             ss=h1a+'AnnualCycle instance \n'+\
                 'year1: {0.year1!s} \n'+\
                 'year2: {0.year2!s} \n'+\
+                'nharm: {0.nharm!s} \n'+\
                 'filein1: {0.filein1!s} \n'+\
                 'data_in: {0.data_in!s} \n'+\
                 'file_anncycle_raw: {0.file_anncycle_raw!s} \n'+\
@@ -958,3 +983,95 @@ class AnnualCycle(object):
         """
 
         self.data_anncycle_raw=iris.load_cube(self.file_anncycle_raw,self.name)
+
+    def f_anncycle_smooth(self):
+        """Calculate smoothed annual cycle.
+
+        This is created from the mean and first self.nharm annual
+        harmonics of the raw annual cycle.
+
+        Create data_mean, data_anncycle_cos, data_anncycle_sin,
+        data_anncycle_smooth attributes.
+
+        """
+        # Calculate annual mean
+        print('data_anncycle_raw.shape: {0!s}'.format(self.data_anncycle_raw.shape))
+        self.data_mean=self.data_anncycle_raw.collapsed('time',iris.analysis.MEAN)
+        print('data_mean.shape: {0!s}'.format(self.data_mean.shape))
+
+        # Calculate cosine and sine harmonics
+        # Create a (ntime,1) array of itime
+        ntime=self.data_anncycle_raw.coord('time').shape[0]
+        itime=numpy.array(numpy.arange(ntime))
+        itime=itime.reshape(itime.shape+(1,))
+        print('itime.shape: {0!s}'.format(itime.shape))
+        # Create a (1,nharm) array of iharm
+        iharm=numpy.array(numpy.arange(1,self.nharm+1))
+        iharm=iharm.reshape(iharm.shape+(1,))
+        iharm=iharm.transpose()
+        print('iharm: {0!s}'.format(iharm))
+        print('iharm.shape: {0!s}'.format(iharm.shape))
+        # Create (ntime,nharm) arrays of cosine and sine waves
+        argument=(2*numpy.pi/float(ntime))*numpy.dot(itime,iharm)
+        cosine=numpy.cos(argument)
+        sine=numpy.sin(argument)
+        print('cosine.shape: {0!s}'.format(cosine.shape))
+        # Duplicate data array with an nharm-length axis and reshape to
+        # (nlat,nlon,...,ntime,nharm) in x6
+        x1=self.data_anncycle_raw.data
+        x2=x1.reshape(x1.shape+(1,))
+        print('x2.shape: {0!s}'.format(x2.shape))
+        x3=numpy.ones((1,self.nharm))
+        print('x3.shape: {0!s}'.format(x3.shape))
+        x4=numpy.dot(x2,x3)
+        print('x4.shape: {0!s}'.format(x4.shape))
+        x5=list(x4.shape)
+        x5.remove(ntime)
+        x5.remove(self.nharm)
+        shape1=tuple(x5)+(ntime,)+(self.nharm,)
+        x6=x4.reshape(shape1)
+        print('x6.shape: {0!s}'.format(x6.shape))
+        # Multiply data by cosine and sine waves
+        x7cos=x6*cosine
+        x7sin=x6*sine
+        # Sum over time axis (index is -2)
+        x8cos=x7cos.sum(axis=-2)
+        x8sin=x7sin.sum(axis=-2)
+        # Divide by ntime to get (nlat,nlon,...,nharm) array of a and b
+        # (cosine and sine) coefficients
+        a_coeff=x8cos/float(ntime)
+        b_coeff=x8sin/float(ntime)
+        print('a_coeff.shape: {0!s}'.format(a_coeff.shape))
+        # Matrix multiply the a,b coefficients by the (nharm,ntime) arrays of
+        # cosine and sine harmonic time series to get the contributions to the
+        # smoothed annual cycle in a (nlat,nlon,...,ntime) array
+        x10cos=numpy.dot(a_coeff,cosine.transpose())
+        x10sin=numpy.dot(b_coeff,sine.transpose())
+        print('x10cos.shape: {0!s}'.format(x10cos.shape))
+        # Reshape so it can be added to mean by broadcasting
+        shape2=(ntime,)+tuple(x5)
+        x11cos=x10cos.reshape(shape2)
+        x11sin=x10sin.reshape(shape2)
+        print('x11cos.shape: {0!s}'.format(x11cos.shape))
+        # Add cosine and sine contributions and time mean to get smoothed
+        # annual cycle
+        x12=self.data_mean.data+x11cos+x11sin
+        # Create a cube from this numpy array
+        x13=create_cube(x12,self.data_anncycle_raw)
+        # Add a cell method to describe the smoothed annual cycle
+        cm=iris.coords.CellMethod('mean','time',comments='smoothed annual cycle: mean + '+str(self.nharm)+' harmonics')
+        x13.add_cell_method(cm)
+        # Set data_anncycle_smooth attribute
+        self.data_anncycle_smooth=x13
+        # Save smoothed annual cycle
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.data_anncycle_smooth,self.file_anncycle_smooth)
+
+    def f_read_anncycle_smooth(self):
+        """Read smoothed annual cycle.
+
+        Create data_anncycle_smooth attribute.
+        """
+
+        self.data_anncycle_smooth=iris.load_cube(self.file_anncycle_smooth,self.name)
+
