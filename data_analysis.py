@@ -33,6 +33,7 @@ attribute).
 # All import statements here, before class definitions
 import iris
 from iris.time import PartialDateTime
+from iris.experimental.equalise_cubes import equalise_attributes
 import datetime
 import os.path
 import mypaths
@@ -95,28 +96,57 @@ def source_info(self):
 #==========================================================================
 
 def clean_callback(cube,field,filename):
-    """Deletes some attributes on iris load.
+    """Deletes many attributes on iris load.
     
-    Problem.  iris concatenate and merge (to create a single cube
-    from a cube list) is very picky and will fail if there are any
+    Problem.  iris concatenate and merge (to create a single cube from
+    a cube list) is very picky and will fail if there are any
     mismatching metadata between the cubes.  This function removes
     attributes from the time coordinate and basic metadata that
-    typically fall foul of this.  These attributes are not useful anyway.
+    typically fall foul of this.  These attributes are not useful
+    anyway.
+
+    Data providers (such as NOAA) sometimes change the attributes
+    (trivially) in the middle of their data sets, so these all need to
+    be stripped out.
+
+    Ideally, this clean callback will only be used in preprocess.py,
+    and all subsequent analysis will not need it.  Hence attributes
+    that are built up during analysis will be self-consistent and will
+    not need removing.
     
     Usage: as an argument in iris load  (...,callback=clean_callback).
     
     """
-    # Delete the problem attribute from the time coordinate:
-    for attribute in ['actual_range']:
+    # Delete the problem attributes from the time coordinate:
+    # 'actual_range' expected to be different between cubes, so delete
+    # 'coordinate_defines' usually set to 'start' or 'point'
+    #     'start' indicates that e.g., the 0000 UTC time stamp refers to the
+    #         start of the day over which the daily average (eg NCEP data)
+    #         has been carried out over.  Unfortunately, NCEP erroneously
+    #         change this to 'point' in 2015.  Need to delete it.
+    att_list=['actual_range','coordinate_defines']
+    for attribute in att_list:
         if attribute in cube.coord('time').attributes:
-            del cube.coord('time').attributes['actual_range']
+            del cube.coord('time').attributes[attribute]
     # Or set the attributes dictionary of the time coordinate to empty:
     #cube.coord('time').attributes = {}
     
     # Similarly delete some of the main attributes
-    for attribute in ['actual_range','history','unpacked_valid_range','references','References','dataset_title']:
+    att_list=['actual_range','history','unpacked_valid_range','references',
+              'References','dataset_title','title','long_name',
+              'Conventions','GRIB_id','GRIB_name','comments','institution',
+              'least_significant_digit','level_desc','parent_stat',
+              'platform','precision','source','statistic','title','var_desc']
+    for attribute in att_list:
         if attribute in cube.attributes:
             del cube.attributes[attribute]
+
+    # A cube also has some "attributes" that are not in the attributes dictionary
+    # Set these to empty strings
+    cube.long_name=''
+
+    # Set cell methods to empty tuple
+    cube.cell_methods=()
 
 #==========================================================================
 
@@ -879,8 +909,8 @@ class AnnualCycle(object):
         # Set current time to be 1 Jan year 1.
         time_sample=datetime.datetime(year=1,month=1,day=1)
         # Set last time to loop over to be 31 Dec year 1.
-        #time_sample_last=datetime.datetime(year=1,month=12,day=31)
-        time_sample_last=datetime.datetime(year=1,month=1,day=3)
+        time_sample_last=datetime.datetime(year=1,month=12,day=31)
+        #time_sample_last=datetime.datetime(year=1,month=1,day=3)
         # Time increment for annual cycle is 1 day
         timedelta=datetime.timedelta(days=1)
         # Create empty CubeList for annual cycle
