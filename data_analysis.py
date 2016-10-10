@@ -31,6 +31,7 @@ attribute).
 """
 
 # All import statements here, before class definitions
+from __future__ import division, print_function, with_statement # So can run this in python2
 import iris
 from iris.time import PartialDateTime
 from iris.experimental.equalise_cubes import equalise_attributes
@@ -38,7 +39,8 @@ import datetime
 import os.path
 import mypaths
 import pdb
-import numpy
+import numpy as np
+import matplotlib.pyplot as plt
 
 h1a='<<<=============================================================\n'
 h1b='=============================================================>>>\n'
@@ -815,7 +817,7 @@ class TimeFilter(object):
             raise UserWarning('Error: self.nweights must be odd.')
         self.nn=divmod(self.nweights,2)[0]
         weights=[float(xx) for xx in lines2]
-        self.weights=numpy.array(weights)
+        self.weights=np.array(weights)
 
 
     def time_filter(self):
@@ -990,6 +992,15 @@ class AnnualCycle(object):
         This is created from the mean and first self.nharm annual
         harmonics of the raw annual cycle.
 
+        f(t_i)= \overline f + \Sum_{k=1}^\{N/2} A_k \cos \omega_k t
+                                              + B_k \sin \omega_k t
+
+        \omega_k = 2\pi k / T
+
+        A_k = 2/N \Sum_{k=1}^\{N} f(t_i) \cos \omega_k t_i
+
+        B_k = 2/N \Sum_{k=1}^\{N} f(t_i) \sin \omega_k t_i
+
         Create data_mean, data_anncycle_cos, data_anncycle_sin,
         data_anncycle_smooth attributes.
 
@@ -1002,56 +1013,76 @@ class AnnualCycle(object):
         # Calculate cosine and sine harmonics
         # Create a (ntime,1) array of itime
         ntime=self.data_anncycle_raw.coord('time').shape[0]
-        itime=numpy.array(numpy.arange(ntime))
+        itime=np.array(np.arange(ntime))
         itime=itime.reshape(itime.shape+(1,))
         print('itime.shape: {0!s}'.format(itime.shape))
         # Create a (1,nharm) array of iharm
-        iharm=numpy.array(numpy.arange(1,self.nharm+1))
+        iharm=np.array(np.arange(1,self.nharm+1))
         iharm=iharm.reshape(iharm.shape+(1,))
         iharm=iharm.transpose()
         print('iharm: {0!s}'.format(iharm))
         print('iharm.shape: {0!s}'.format(iharm.shape))
         # Create (ntime,nharm) arrays of cosine and sine waves
-        argument=(2*numpy.pi/float(ntime))*numpy.dot(itime,iharm)
-        cosine=numpy.cos(argument)
-        sine=numpy.sin(argument)
+        argument=(2*np.pi/float(ntime))*np.dot(itime,iharm)
+        cosine=np.cos(argument)
+        sine=np.sin(argument)
+        print('argument: {0!s}'.format(argument))
+        print('cosine: {0!s}'.format(cosine))
         print('cosine.shape: {0!s}'.format(cosine.shape))
         # Duplicate data array with an nharm-length axis and reshape to
         # (nlat,nlon,...,ntime,nharm) in x6
+        # NB the nlat,nlon,... could be just nlat,nlon, or eg nlat,lon,nlev
         x1=self.data_anncycle_raw.data
         x2=x1.reshape(x1.shape+(1,))
         print('x2.shape: {0!s}'.format(x2.shape))
-        x3=numpy.ones((1,self.nharm))
+        x3=np.ones((1,self.nharm))
         print('x3.shape: {0!s}'.format(x3.shape))
-        x4=numpy.dot(x2,x3)
+        x4=np.dot(x2,x3)
         print('x4.shape: {0!s}'.format(x4.shape))
         x5=list(x4.shape)
         x5.remove(ntime)
         x5.remove(self.nharm)
         shape1=tuple(x5)+(ntime,)+(self.nharm,)
-        x6=x4.reshape(shape1)
+        # x4 is (ntime,nlat,nlon,...,nharm)
+        # Cannot do a simple np.reshape to shape1 (nlat,nlon,...,ntime,nharm)
+        # as data is not assigned properly.
+        # Create a new array of zeros, then overwrite the data in this
+        x6=np.zeros(shape1)
+        if len(shape1)>4:
+            raise UserWarning('Code not able to cope with lat,lon,lev data!')
+        else:
+            for ii in range(ntime):
+                for kk in range(self.nharm):
+                    # The :,: below refers to the lat,lon dimensions
+                    # If data is lat,lon,lev need to rewrite code
+                    x6[:,:,ii,kk]=x4[ii,:,:,kk]
+        #x6=x4.reshape(shape1)
         print('x6.shape: {0!s}'.format(x6.shape))
-        # Multiply data by cosine and sine waves
+        # Multiply data by cosine and sine waves:
+        # f(t_i) cos/sin omega_k t_i
         x7cos=x6*cosine
         x7sin=x6*sine
         # Sum over time axis (index is -2)
         x8cos=x7cos.sum(axis=-2)
         x8sin=x7sin.sum(axis=-2)
-        # Divide by ntime to get (nlat,nlon,...,nharm) array of a and b
-        # (cosine and sine) coefficients
-        a_coeff=x8cos/float(ntime)
-        b_coeff=x8sin/float(ntime)
+        # Multiply by 2/ntime to get (nlat,nlon,...,nharm) array of a and b
+        # A_k and B_k coefficients
+        a_coeff=2.0*x8cos/float(ntime)
+        b_coeff=2.0*x8sin/float(ntime)
         print('a_coeff.shape: {0!s}'.format(a_coeff.shape))
         # Matrix multiply the a,b coefficients by the (nharm,ntime) arrays of
         # cosine and sine harmonic time series to get the contributions to the
         # smoothed annual cycle in a (nlat,nlon,...,ntime) array
-        x10cos=numpy.dot(a_coeff,cosine.transpose())
-        x10sin=numpy.dot(b_coeff,sine.transpose())
+        x10cos=np.dot(a_coeff,cosine.transpose())
+        x10sin=np.dot(b_coeff,sine.transpose())
         print('x10cos.shape: {0!s}'.format(x10cos.shape))
         # Reshape so it can be added to mean by broadcasting
         shape2=(ntime,)+tuple(x5)
-        x11cos=x10cos.reshape(shape2)
-        x11sin=x10sin.reshape(shape2)
+        x11cos=np.zeros(shape2)
+        x11sin=np.zeros(shape2)
+        for ii in range(ntime):
+            x11cos[ii,:,:]=x10cos[:,:,ii]
+            x11sin[ii,:,:]=x10sin[:,:,ii]
         print('x11cos.shape: {0!s}'.format(x11cos.shape))
         # Add cosine and sine contributions and time mean to get smoothed
         # annual cycle
