@@ -175,6 +175,31 @@ def create_cube(array,oldcube):
 
 #==========================================================================
 
+def conv_float32(old_array):
+    """Convert a numpy array type to float32 ('single precision').
+
+    Default numpy array type is float64 (64 bit, or 'double
+    precision').  This leads to a doubling of disk space needed to
+    store data, compared to float32 (32 bit, 'single precision'), with
+    only spurious increase in precision.
+
+    It is not a problem having float64 type numbers in memory, only
+    when they are written to disk.  Hence, just call this function as
+    a final wrapper for a numpy array that is about to be converted to
+    an iris cube.  Do not bother with all the previous intermediate
+    steps, as float64 is insidious and can easily creep back into to
+    your arrays somewhere.
+
+    Input: old_array should be a numpy array.
+
+    Returns new_array, a numpy array of type float32.
+    """
+
+    new_array=old_array.astype(type('float32',(np.float32,),{}))
+    return new_array
+
+#==========================================================================
+
 class TimeDomain(object):
     """A set of single or paired (start,end) times.
 
@@ -870,10 +895,9 @@ class AnnualCycle(object):
 
     self.data_anncycle_rm : iris cube of output data with annual cycle
     removed.  Usually the time dimension will run for one complete
-    year (self.year_current) from 1 Jan to 31 Dec (cannot be more than
-    this, i.e., data is to be processed in blocks of 1 year).
-    However, the first and last years of input data may be incomplete,
-    and allowance is made for this.
+    cycle of self.outfile_frequency, e.g. 1 year, from 1 Jan to 31
+    Dec.  However, the first and last years of input data may be
+    incomplete, and allowance is made for this.
     
     self.filein1 : path name for file(s) of input data.
     
@@ -882,8 +906,9 @@ class AnnualCycle(object):
     self.file_anncycle_smooth : path name for file of smoothed annual
     cycle.
     
-    self.fileout_anncycle_rm : path name for file of output data with
-    smoothed annual cycle subtracted.
+    self.file_anncycle_rm : (partial) path name for file of data with
+    smoothed annual cycle subtracted.  This path name is then split
+    and e.g., year numbers spliced in for output to individual years.
     
     """
     def __init__(self,descriptor,verbose=False):
@@ -892,6 +917,9 @@ class AnnualCycle(object):
         self.filein1=descriptor['filein1']
         self.file_anncycle_raw=descriptor['file_anncycle_raw']
         self.file_anncycle_smooth=descriptor['file_anncycle_smooth']
+        x1=self.file_anncycle_smooth.split('.')
+        self.file_anncycle_smooth_leap=x1[0]+'_leap.'+x1[1]
+        self.file_anncycle_rm=descriptor['file_anncycle_rm']
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
         self.source=descriptor['source']
@@ -900,6 +928,14 @@ class AnnualCycle(object):
         self.year2=descriptor['year2']
         self.nharm=descriptor['nharm']
         self.data_in=iris.load(self.filein1,self.name)
+        # Get first time in input data
+        x1=self.data_in[0].coord('time')[0]
+        x2=x1.cell(0)[0]
+        self.time1=x1.units.num2date(x2)
+        # Get last time in input data
+        x1=self.data_in[-1].coord('time')[-1]
+        x2=x1.cell(0)[0]
+        self.time2=x1.units.num2date(x2)
         if self.verbose:
             print(self)        
 
@@ -914,20 +950,30 @@ class AnnualCycle(object):
                 'nharm: {0.nharm!s} \n'+\
                 'filein1: {0.filein1!s} \n'+\
                 'data_in: {0.data_in!s} \n'+\
+                'time1: {0.time1!s} \n'+\
+                'time2: {0.time2!s} \n'+\
                 'file_anncycle_raw: {0.file_anncycle_raw!s} \n'+\
-                'file_anncycle_smooth: {0.file_anncycle_smooth!s} \n'+h1b
+                'file_anncycle_smooth: {0.file_anncycle_smooth!s} \n'+\
+                'file_anncycle_smooth_leap: {0.file_anncycle_smooth_leap!s} \n'+h1b
             return(ss.format(self))
         else:
             return 'AnnualCycle instance'
 
-    def f_anncycle_raw(self):
+    def f_anncycle_raw_old(self):
         """Create raw annual cycle and write to file.
 
         This will be assigned to year 1, i.e. AD 1.  NB year 1 is not
         a leap year.
 
+        Code is rather slow as it loops over each day of the year, and
+        reads in all data (eg 1 Jan's) for that day and averages over
+        them.  Superceded by new version of f_anncycle_raw, but have
+        left the code here as it has some good iris pointers.
+
         Create data_anncycle_raw attribute.
         """
+
+        raise UserWarning('Use f_anncycle_raw instead')
 
         if self.frequency!='d':
             raise UserWarning('Annual cycle presently only coded up for daily data.')
@@ -969,11 +1015,100 @@ class AnnualCycle(object):
             x3.add_aux_coord(tcoord)
             # Append mean for current day of year to annual cycle
             x10.append(x3)
-            print(time_sample,time_val)
+            print('time_sample,time_val: {0!s}, {1!s}'.format(time_sample,time_val))
             # Increment day of year
             time_sample+=timedelta
         x11=x10.merge_cube()
         self.data_anncycle_raw=x11
+        # Save raw annual cycle
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.data_anncycle_raw,self.file_anncycle_raw)
+
+    def f_anncycle_raw(self):
+        """Create raw annual cycle and write to file.
+
+        This will be assigned to year 1, i.e. AD 1.  NB year 1 is not
+        a leap year.
+
+        Create data_anncycle_raw attribute.
+        """
+
+        if self.frequency!='d':
+            raise UserWarning('Annual cycle presently only coded up for daily data.')
+        kyear=0
+        # First year
+        yearc=self.year1
+        kyear+=1
+        # Extract 1 Jan to 28 Feb of current year
+        time1=datetime.datetime(yearc,1,1)
+        time2=datetime.datetime(yearc,2,28)
+        print(kyear,time1,time2)
+        time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x1=self.data_in.extract(time_constraint)
+        janfeb=x1.concatenate_cube()
+        janfeb.remove_coord('time')
+        # Extract 1 Mar to 31 Dec of current year
+        time1=datetime.datetime(yearc,3,1)
+        time2=datetime.datetime(yearc,12,31)
+        time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x1=self.data_in.extract(time_constraint)
+        mardec=x1.concatenate_cube()
+        mardec.remove_coord('time')
+        #
+        # Loop over remaining years and add contributions
+        #for yearc in range(self.year1+1,self.year2+1):
+        for yearc in range(self.year1+1,self.year1+2):
+            kyear+=1
+            # Extract 1 Jan to 28 Feb of current year
+            time1=datetime.datetime(yearc,1,1)
+            time2=datetime.datetime(yearc,2,28)
+            print(kyear,time1,time2)
+            time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+            with iris.FUTURE.context(cell_datetime_objects=True):
+                x1=self.data_in.extract(time_constraint)
+            janfebc=x1.concatenate_cube()
+            janfebc.remove_coord('time')
+            # Extract 1 Mar to 31 Dec of current year
+            time1=datetime.datetime(yearc,3,1)
+            time2=datetime.datetime(yearc,12,31)
+            time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+            with iris.FUTURE.context(cell_datetime_objects=True):
+                x1=self.data_in.extract(time_constraint)
+            mardecc=x1.concatenate_cube()
+            mardecc.remove_coord('time')
+            # Add contributions for current year
+            janfeb=iris.analysis.maths.add(janfeb,janfebc)
+            mardec=iris.analysis.maths.add(mardec,mardecc)
+        # Divide by number of years to calculate mean
+        janfeb=iris.analysis.maths.divide(janfeb,kyear)
+        mardec=iris.analysis.maths.divide(mardec,kyear)
+        # Create and add a time coordinate for year 1, and attributes
+        time_first=datetime.datetime(year=1,month=1,day=1)
+        time_units='days since '+str(time_first)
+        # janfeb
+        time_val=np.arange(59)
+        tcoord=iris.coords.DimCoord(time_val,standard_name='time',units=time_units)
+        janfeb.add_dim_coord(tcoord,0)
+        janfeb.standard_name=janfebc.standard_name
+        janfeb.var_name=janfebc.var_name
+        janfeb.attributes=janfebc.attributes
+        # mardec
+        time_val=np.arange(59,365)
+        tcoord=iris.coords.DimCoord(time_val,standard_name='time',units=time_units)
+        mardec.add_dim_coord(tcoord,0)
+        mardec.standard_name=mardecc.standard_name
+        mardec.var_name=mardecc.var_name
+        mardec.attributes=mardecc.attributes
+        # Create a cubelist then a single cube
+        x3=iris.cube.CubeList([janfeb,mardec])
+        x4=x3.concatenate_cube()
+        # Add a cell method to describe the action of creating annual cycle
+        cm=iris.coords.CellMethod('mean','time',comments='raw annual cycle '+str(self.year1)+'-'+str(self.year2))
+        x4.add_cell_method(cm)
+        # Set data_anncycle_raw attribute
+        self.data_anncycle_raw=x4
         # Save raw annual cycle
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.data_anncycle_raw,self.file_anncycle_raw)
@@ -1001,8 +1136,8 @@ class AnnualCycle(object):
 
         B_k = 2/N \Sum_{k=1}^\{N} f(t_i) \sin \omega_k t_i
 
-        Create data_mean, data_anncycle_cos, data_anncycle_sin,
-        data_anncycle_smooth attributes.
+        Create data_mean, data_anncycle_smooth,
+        data_anncycle_smooth_leap attributes.
 
         """
         # Calculate annual mean
@@ -1088,21 +1223,161 @@ class AnnualCycle(object):
         # annual cycle
         x12=self.data_mean.data+x11cos+x11sin
         # Create a cube from this numpy array
-        x13=create_cube(x12,self.data_anncycle_raw)
+        x13=create_cube(conv_float32(x12),self.data_anncycle_raw)
         # Add a cell method to describe the smoothed annual cycle
         cm=iris.coords.CellMethod('mean','time',comments='smoothed annual cycle: mean + '+str(self.nharm)+' harmonics')
         x13.add_cell_method(cm)
         # Set data_anncycle_smooth attribute
         self.data_anncycle_smooth=x13
         # Save smoothed annual cycle
+        #pdb.set_trace(); print('@@@ Stop here.')
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.data_anncycle_smooth,self.file_anncycle_smooth)
+        #
+        #
+        # Create alternate smoothed annual cycle for leap year, with 29 Feb
+        # represented by a copy of 28 Feb.
+        # Use year 4 for this, as this is a leap year.
+        time_units_leap='days since 0004-01-01 00:00:0.0'
+        # 1 Jan to 28 Feb of smoothed annual cycle
+        time1=datetime.datetime(1,1,1)
+        time2=datetime.datetime(1,2,28)
+        time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            janfeb=x13.extract(time_constraint)
+        time_val=janfeb.coord('time').points
+        tcoord2=iris.coords.DimCoord(time_val,standard_name='time',var_name='time',units=time_units_leap)
+        janfeb.remove_coord('time')
+        janfeb.add_dim_coord(tcoord2,0)
+        # 29 Feb only of smoothed annual cycle. Copy of 28 Feb data.
+        time1=datetime.datetime(1,2,28)
+        time_constraint=iris.Constraint(time=time1)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            feb29=x13.extract(time_constraint)
+        feb29=iris.util.new_axis(feb29,'time') # Promote singleton aux coord to dim coord
+        time_val=np.array([59,]) # Julian day number for 29 Feb
+        tcoord2=iris.coords.DimCoord(time_val,standard_name='time',var_name='time',units=time_units_leap)
+        feb29.remove_coord('time')
+        feb29.add_dim_coord(tcoord2,0)
+        # 1 Mar to 31 Dec of smoothed annual cycle
+        time1=datetime.datetime(1,3,1)
+        time2=datetime.datetime(1,12,31)
+        time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            mardec=x13.extract(time_constraint)
+        time_val=mardec.coord('time').points+1
+        tcoord2=iris.coords.DimCoord(time_val,standard_name='time',var_name='time',units=time_units_leap)
+        mardec.remove_coord('time')
+        mardec.add_dim_coord(tcoord2,0)
+        # Create a cubelist then a single cube
+        x1=iris.cube.CubeList([janfeb,feb29,mardec])
+        x2=x1.concatenate_cube()
+        # Set data_anncycle_smooth_leap attribute
+        self.data_anncycle_smooth_leap=x2
+        # Save smoothed annual cycle for leap year
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.data_anncycle_smooth_leap,self.file_anncycle_smooth_leap)
+        
 
     def f_read_anncycle_smooth(self):
         """Read smoothed annual cycle.
 
-        Create data_anncycle_smooth attribute.
-        """
+        Create data_anncycle_smooth and data_anncycle_smooth_leap
+        attributes.  """
 
         self.data_anncycle_smooth=iris.load_cube(self.file_anncycle_smooth,self.name)
+        self.data_anncycle_smooth_leap=iris.load_cube(self.file_anncycle_smooth_leap,self.name)
 
+    def f_subtract_anncycle(self):
+        """Subtract smoothed annual cycle from input data.
+
+        Read in input data and process and write output data (anomaly
+        with smoothed annual cycle subtracted) in chunks of
+        outfile_frequency, e.g., 'year'.
+
+        Makes allowance for input data not having to start on 1 Jan or
+        end on 31 Dec.
+
+        Create data_anncycle_rm attribute.
+        """
+
+        # Set initial value of current year
+        yearc=self.time1.year
+        # Set final value of current year
+        year_end=self.time2.year
+        
+        if self.outfile_frequency=='year':
+            # Loop over years
+            while yearc<=year_end:
+                # If current year is leap year, use
+                # self.data_anncycle_smooth_leap, otherwise use
+                # self.data_anncycle_smooth.
+                if divmod(yearc,4)[1]==0:
+                    leap=True
+                    smooth_year_number=4
+                    anncycle_smooth=self.data_anncycle_smooth_leap
+                else:
+                    leap=False
+                    smooth_year_number=1
+                    anncycle_smooth=self.data_anncycle_smooth
+                print(yearc,leap)
+                # Set start and end times for input and anncycle data
+                time_beg_in=datetime.datetime(yearc,1,1)
+                if time_beg_in<self.time1:
+                    time_beg_in=self.time1
+                time_end_in=datetime.datetime(yearc,12,31)
+                if time_end_in>self.time2:
+                    time_end_in=self.time2
+                time_beg_anncycle=datetime.datetime(smooth_year_number,
+                                                    time_beg_in.month,
+                                                    time_beg_in.day)
+                time_end_anncycle=datetime.datetime(smooth_year_number,
+                                                    time_end_in.month,
+                                                    time_end_in.day)
+                print(time_beg_in,time_end_in,time_beg_anncycle,
+                      time_end_anncycle)
+                # Extract input data for this (potentially partial) year
+                time_constraint=iris.Constraint(time=lambda cell: time_beg_in<=cell<=time_end_in)
+                with iris.FUTURE.context(cell_datetime_objects=True):
+                    x1=self.data_in.extract(time_constraint)
+                data_in=x1.concatenate_cube()
+                # Extract anncycle data for this (potentially partial) year
+                time_constraint=iris.Constraint(time=lambda cell: time_beg_anncycle<=cell<=time_end_anncycle)
+                with iris.FUTURE.context(cell_datetime_objects=True):
+                    data_anncycle=anncycle_smooth.extract(time_constraint)
+                # Remove time coordinates from input and anncycle cubes so they
+                # can be subtracted
+                tcoord=data_in.coord('time')
+                data_in.remove_coord('time')
+                data_anncycle.remove_coord('time')
+                # Subtract smoothed annual cycle for current period to create anomaly
+                data_anom=iris.analysis.maths.subtract(data_in,data_anncycle)
+                # Add back time coordinate and update metadata
+                data_anom.add_dim_coord(tcoord,0)
+                data_anom.standard_name=data_in.standard_name
+                data_anom.var_name=data_in.var_name
+                data_anom.attributes=data_in.attributes
+                # Add a cell method to describe the smoothed annual cycle
+                # There is a small list of allowed method names (1st argument)
+                # 'point' seems the most appropriate, actions on each point?!
+                cm=iris.coords.CellMethod('point','time',comments='smoothed annual cycle: '+str(self.year1)+'-'+str(self.year2)+': mean + '+str(self.nharm)+' harmonics')
+                data_anom.add_cell_method(cm)
+                # Set data_anncycle_rm attribute
+                self.data_anncycle_rm=data_anom
+                # Save anomaly data (anncycle subtracted)
+                fileout=self.file_anncycle_rm.replace('*',str(yearc))
+                print('fileout: {0!s}'.format(fileout))
+                with iris.FUTURE.context(netcdf_no_unlimited=True):
+                    iris.save(self.data_anncycle_rm,fileout)
+                # Increment current year
+                yearc+=1
+        else:
+            raise UserWarning('Need code for other outfile_frequency values.')
+
+    def f_read_subtract_anncycle(self):
+        """Read anomaly data (annual cycle subtracted).
+
+
+        """
+        self.data_anncycle_rm=iris.load_cube(self.file_anncycle_rm,self.name)
+        
