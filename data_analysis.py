@@ -66,6 +66,23 @@ var_name2standard_name={
     'mslp':'air_pressure_at_sea_level',
     'psfc':'surface_air_pressure',
     'ta':'air_temperature',
+    'olr':'toa_outgoing_longwave_flux',
+    'sst':'sea_surface_temperature',
+    }
+
+# source_information is a dictionary of dictionaries with information on data
+# sources.
+
+source_information={
+    'ncepdoe_plev_d':{'description':'NCEP-DOE reanalysis',
+               'url':'www.cdc.noaa.gov',
+               'reference':'kanamitsuetal2002'},
+    'olrcdr_toa_d':{'description':'NOAA OLR daily climate data record',
+              'url':'www.cdc.noaa.gov',
+              'reference':'lee2014'},
+    'sstrey_sfc_w':{'description':'Reynolds SST',
+               'url':'www.cdc.noaa.gov',
+               'reference':'reynoldsetal2002'},
     }
 
 #==========================================================================
@@ -80,19 +97,21 @@ def source_info(self):
     self.level_type=xx[1]
     self.frequency=xx[2]
     # Check data_source attribute is valid
-    valid_data_sources=['ncepdoe',]
+    valid_data_sources=['ncepdoe','olrcdr','sstrey']
     if self.data_source not in valid_data_sources:
         raise UserWarning('data_source {0.data_source!s} not vaild'.format(self))
     # Set outfile_frequency attribute depending on source information
-    if self.data_source in ['ncepdoe',]:
+    if self.source in ['ncepdoe_plev_d','olrcdr_toa_d','sstrey_sfc_w','sstrey_sfc_d']:
         self.outfile_frequency='year'
+    else:
+        raise UserWarning('Need to specify outfile_frequency for this data source.')
     # Printed output
     if self.verbose:
         ss=h2a+'source_info.  Created attributes: \n'+\
             'data source: {0.data_source!s} \n'+\
             'level_type: {0.level_type!s} \n'+\
             'frequency: {0.frequency!s} \n'+\
-            'outfile_frequency {0.outfile_frequency!s} \n'+h2b
+            'outfile_frequency: {0.outfile_frequency!s} \n'+h2b
         print(ss.format(self))
                 
 #==========================================================================
@@ -138,7 +157,8 @@ def clean_callback(cube,field,filename):
               'References','dataset_title','title','long_name',
               'Conventions','GRIB_id','GRIB_name','comments','institution',
               'least_significant_digit','level_desc','parent_stat',
-              'platform','precision','source','statistic','title','var_desc']
+              'platform','precision','source','statistic','title','var_desc',
+              'NCO']
     for attribute in att_list:
         if attribute in cube.attributes:
             del cube.attributes[attribute]
@@ -444,10 +464,12 @@ class DataConverter(object):
 
     Time: Several options for output file(s):
        If individual files are larger ~1GB, file access significantly slowed
-       All data output in single file (e.g., from 1979-2016)
+       Try to keep individual files significantly smaller than this.
+       All data output in single file (e.g., from 1979-2016).  Try not to use.
        Data output in separate files for each year, e.g., 1979, 1980, etc.
        Data output in separate files for each month, e.g., Jan 1979, etc.
-       olr 144x73 grid, daily, 50 years = 770 MB single file, ok
+       ncepdoe 144x73 grid, daily, = 15 MB per year, ok
+       olrcdr 360x180 grid, daily, = 95 MB per year, ok
        era-interim 512x256 grid, 6 hourly = 765 MB per year, ok
        trmm 1440x~400 grid, 3 hourly = 550 MB per month, ok
 
@@ -456,7 +478,7 @@ class DataConverter(object):
     self.basedir : string name of base directory for all data
 
     self.source : string name of data source, e.g., 'ncepdoe_plev_d',
-    'ncepdoe_plev_6h', 'ncepdoe_sfc_6h', 'olrinterp_toa_d' etc.  There
+    'ncepdoe_plev_6h', 'ncepdoe_sfc_6h', 'olrcdr_toa_d' etc.  There
     is a different source for each different combination of source
     data set (e.g., NCEP-DOE reanalysis), type of level (e.g.,
     pressure level), and frequency of input data (e.g., daily).  The
@@ -474,7 +496,7 @@ class DataConverter(object):
           directory.
 
     self.data_source : string name of data source, e.g., 'ncepdoe',
-    'olrinterp', etc.  Note that a particular data_source implies a
+    'olrcdr', etc.  Note that a particular data_source implies a
     particular latitude-longitude grid, e.g., 'ncepdoe' is a 73x144
     grid.  This is relevant for file sizes and self.outfile_frequency.
 
@@ -540,60 +562,52 @@ class DataConverter(object):
         else:
             return self.__repr__()
 
-    def source_info(self):
-        """Create attributes based on the source attribute."""
-        # Split source attribute string using underscores as separators
-        xx=self.source.split('_')
-        if len(xx)!=3:
-            raise UserWarning("source attribute '{0.source!s}' must have three parts separated by underscores".format(self))
-        self.data_source=xx[0]
-        self.level_type=xx[1]
-        self.frequency=xx[2]
-        # Check data_source attribute is valid
-        valid_data_sources=['ncepdoe',]
-        if self.data_source not in valid_data_sources:
-            raise UserWarning('data_source {0.data_source!s} not vaild'.format(self))
-        # Set outfile_frequency attribute depending on source information
-        if self.data_source in ['ncepdoe',]:
-            self.outfile_frequency='year'
-        # Printed output
-        if self.verbose:
-            ss=h2a+'source_info.  Created attributes: \n'+\
-                'data source: {0.data_source!s} \n'+\
-                'level_type: {0.level_type!s} \n'+\
-                'frequency: {0.frequency!s} \n'+\
-                'outfile_frequency {0.outfile_frequency!s} \n'+h2b
-            print(ss.format(self))
-                
     def read_cube(self):
         """Read cube from raw input file.
 
         Code is by necessity ad hoc as it caters for many different
         data sources with different input formats.
         """
-        # Set input file name and time constraint for current year
+        # Set time constraint for current time block
         if self.outfile_frequency=='year':
-            if self.data_source in ['ncepdoe',]:
-                self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.'+str(self.year)+'.nc')
-                pdt1=PartialDateTime(year=self.year,month=1,day=1,hour=0,minute=0,second=0,microsecond=0)
-                pdt2=PartialDateTime(year=self.year,month=12,day=31,hour=23,minute=59,second=59,microsecond=999999)
-                time_constraint=iris.Constraint(time = lambda cell: pdt1 <= cell <= pdt2)
+            time1=datetime.datetime(year=self.year,month=1,day=1,hour=0,minute=0,second=0,microsecond=0)
+            time2=datetime.datetime(year=self.year,month=12,day=31,hour=23,minute=59,second=59,microsecond=999999)
+            time_constraint=iris.Constraint(time = lambda cell: time1 <= cell <= time2)
         else:
             raise UserWarning("Need to write code for outfile_frequency other than 'year'.")
-        # Set level constraint
+        # Set input file name(s)
+        if self.data_source in ['ncepdoe',]:
+            self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.'+str(self.year)+'.nc')
+        elif self.source in ['olrcdr_toa_d',]:
+            self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.day.mean.nc')
+        elif self.source in ['sstrey_sfc_w',]:
+            if 1981<=self.year<=1989:
+                self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.wkmean.1981-1989.nc')
+            elif 1990<=self.year:
+                self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.wkmean.1990-present.nc')
+            else:
+                raise UserWarning('Invalid year')
+        else:
+            raise UserWarning('Data source not recognised')
+        # Set level constraint (set to False if none)
         if self.data_source in ['ncepdoe',] and self.level_type=='plev':
             level_constraint=iris.Constraint(Level=self.level)
+        elif self.source in ['olrcdr_toa_d','sstrey_sfc_w']:
+            level_constraint=False
         # Load cube
         self.cube=iris.load_cube(self.filein1,self.name,callback=clean_callback)
         xx=self.cube.coord('time')
         xx.bounds=None # Hack for new netcdf4 ncepdoe which have physically implausible time bounds
         with iris.FUTURE.context(cell_datetime_objects=True):
-            self.cube=self.cube.extract(level_constraint & time_constraint)
+            if level_constraint:
+                self.cube=self.cube.extract(level_constraint & time_constraint)
+            else:
+                self.cube=self.cube.extract(time_constraint)
         if self.verbose==2:
             ss=h2a+'read_cube. \n'+\
-                'pdt1: {0!s} \n'+\
-                'pdt2: {1!s} \n'+h2b
-            print(ss.format(pdt1,pdt2))
+                'time1: {0!s} \n'+\
+                'time2: {1!s} \n'+h2b
+            print(ss.format(time1,time2))
         
     def format_cube(self):
         """Change cube to standard format."""
@@ -601,6 +615,25 @@ class DataConverter(object):
         if self.cube.var_name!=self.var_name:
             self.cube.varn_name=self.var_name
             print('format_cube: Changed {0.cube.var_name!s} to {0.var_name!s}'.format(self))
+        # Reynolds SST weekly data.  Time stamp is at beginning of week.
+        # Change so it is at the end of the week, by adding 3 (days).
+        # NB This can bump a data point at the end of the year into the next
+        # year, eg 1982-12-29 is changed to 1984-01-01.  This should not
+        # matter as the next step with this data is to linearly interpolate
+        # to daily data, which uses all data, not the individual yearly files.
+        if self.source=='sstrey_sfc_w':
+            tcoord=self.cube.coord('time')
+            time_units=tcoord.units
+            if 'day' not in time_units.name:
+                raise UserWarning('Expecting time units in days.')
+            time_val=tcoord.points+3
+            tcoord2=iris.coords.DimCoord(time_val,standard_name='time',units=time_units)
+            if self.verbose==2:
+                print('tcoord: {0!s}'.format(tcoord))
+                print('tcoord2: {0!s}'.format(tcoord2))
+            self.cube.remove_coord('time')
+            self.cube.add_dim_coord(tcoord2,0)
+            print('Added 3 days to time coord so time is now in centre of 7-day mean.')
 
     def write_cube(self):
         """Write cube to netcdf file."""
@@ -863,6 +896,110 @@ class TimeFilter(object):
 
 #==========================================================================
 
+class Interpolate(object):
+    """Interpolate data using iris.analysis.interpolate.
+
+    """
+
+    def __init__(self,descriptor,verbose=False):
+        self.descriptor=descriptor
+        self.verbose=verbose
+        self.file_data_in=descriptor['file_data_in']
+        self.file_data_out=descriptor['file_data_out']
+        self.var_name=descriptor['var_name']
+        self.name=var_name2standard_name[self.var_name]
+        self.source1=descriptor['source1']
+        self.source2=descriptor['source2']
+        self.source=self.source2
+        source_info(self)
+        self.data_in=iris.load(self.file_data_in,self.name)
+        # Get first time in input data
+        x1=self.data_in[0].coord('time')[0]
+        x2=x1.cell(0)[0]
+        self.time1=x1.units.num2date(x2)
+        # Get last time in input data
+        x1=self.data_in[-1].coord('time')[-1]
+        x2=x1.cell(0)[0]
+        self.time2=x1.units.num2date(x2)
+        self.time_units=x1.units
+        if self.verbose:
+            print(self)        
+
+    def __repr__(self):
+        return 'Interpolate({0.descriptor!r},verbose={0.verbose!r})'.format(self)
+
+    def __str__(self):
+        if self.verbose==2:
+            ss=h1a+'Interpolate instance \n'+\
+                'file_data_in: {0.file_data_in!s} \n'+\
+                'data_in: {0.data_in!s} \n'+\
+                'time1: {0.time1!s} \n'+\
+                'time2: {0.time2!s} \n'+\
+                'time_units: {0.time_units!s} \n'+\
+                'source1: {0.source1!s} \n'+\
+                'source2: {0.source2!s} \n'+\
+                'file_data_out: {0.file_data_out!s} \n'+h1b
+            return(ss.format(self))
+        else:
+            return 'AnnualCycle instance'
+
+    def f_interpolate_time(self):
+        """Interpolate over time."""
+        # Ensure time interval to interpolate onto is within input time interval
+        if self.time1_out<self.time1:
+            self.time1_out=self.time1
+            print('Correcting time1_out to be within bounds: {0.time1_out!s}'.format(self))
+        if self.time2_out>self.time2:
+            self.time2_out=self.time2
+            print('Correcting time2_out to be within bounds: {0.time2_out!s}'.format(self))
+        # Interpolate to daily data
+        if self.frequency=='d':
+            # Set times to interpolate onto
+            self.time1_out_val=self.time_units.date2num(self.time1_out)
+            self.time2_out_val=self.time_units.date2num(self.time2_out)
+            if 'day' in self.time_units.name:
+                time_diff=1
+                self.sample_points=[('time',np.arange(self.time1_out_val,self.time2_out_val+time_diff,time_diff))]
+            else:
+                raise UserWarning('Need code for time units that are not in days.')
+            # Create cube (from cube list) of input data for interpolation
+            # Times interval for this cube must completely contain the
+            #   output interval (time_val1 to time_val2) for interpolation,
+            #   if possible, otherwise there will be extrapolation at ends
+            # Create a timedelta of default 25 days to account for this
+            self.timedelta=datetime.timedelta(days=25)
+            self.time1_in=self.time1_out-self.timedelta
+            self.time2_in=self.time2_out+self.timedelta
+            ss=h2a+'f_time_interpolate. \n'+\
+                'timedelta: {0.timedelta!s} \n'+\
+                'time1_in: {0.time1_in!s} \n'+\
+                'time1_out: {0.time1_out!s} \n'+\
+                'time2_out: {0.time2_out!s} \n'+\
+                'time2_in: {0.time2_in!s} \n'+\
+                'time1_out_val: {0.time1_out_val!s} \n'+\
+                'time2_out_val: {0.time2_out_val!s} \n'+h2b
+            if self.verbose==2:
+                print(ss.format(self))
+            time_constraint=iris.Constraint(time=lambda cell: self.time1_in <=cell<= self.time2_in)
+            with iris.FUTURE.context(cell_datetime_objects=True):
+                x1=self.data_in.extract(time_constraint)
+            self.cube_in=x1.concatenate_cube()
+            # Interpolate in time
+            self.cube_out=iris.cube.Cube.interpolate(self.cube_in,self.sample_points,scheme=iris.analysis.Linear())
+            # Add cell method to describe linear interpolation
+            cm=iris.coords.CellMethod('point','time',comments='linearly interpolated from weekly to daily time dimension')
+            self.cube_out.add_cell_method(cm)
+            # Save interpolated data
+            fileout=self.file_data_out.replace('*',str(self.year))
+            print('fileout: {0!s}'.format(fileout))
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.cube_out,fileout)
+        else:
+            raise UserWarning('Need code for interpolation to other than daily data.')
+        
+
+#==========================================================================
+
 class AnnualCycle(object):
     """Calculate and subtract annual cycle.
 
@@ -877,7 +1014,7 @@ class AnnualCycle(object):
     calculated using input data from 0000:00 UTC 1 Jan self.year1 to
     2359:59 31 Dec self.year2.
 
-    self.data_in : iris cube list of all input data
+    self.data_in : iris cube list of all input data.
 
     self.data_anncycle_raw : iris cube of 'raw' annual cycle.  The
     data for e.g. 5 Jan is a simple mean of all the input data for 5
@@ -890,35 +1027,31 @@ class AnnualCycle(object):
     self.nharm : integer number of annual harmonics to retain for
     smoothed annual cycle.
 
-    self.year_current : integer current year for which annual cycle is
-    being removed.
-
-    self.data_anncycle_rm : iris cube of output data with annual cycle
-    removed.  Usually the time dimension will run for one complete
-    cycle of self.outfile_frequency, e.g. 1 year, from 1 Jan to 31
-    Dec.  However, the first and last years of input data may be
-    incomplete, and allowance is made for this.
+    self.data_anncycle_rm : iris cube list of anomaly data with annual
+    cycle subtracted.
     
-    self.filein1 : path name for file(s) of input data.
+    self.file_data_in : path name for file(s) of input data.  Contains a
+    wild card * character, which will be replaced by, e.g., year
+    numbers (if self.outfile_frequency is 'year').
     
     self.file_anncycle_raw : path name for file of raw annual cycle.
     
     self.file_anncycle_smooth : path name for file of smoothed annual
     cycle.
     
-    self.file_anncycle_rm : (partial) path name for file of data with
-    smoothed annual cycle subtracted.  This path name is then split
-    and e.g., year numbers spliced in for output to individual years.
-    
+    self.file_anncycle_rm : path name for file(s) of data with
+    smoothed annual cycle subtracted.  Contains a wild card *
+    character, which will be replaced by, e.g., year numbers (if
+    self.outfile_frequency is 'year').
     """
+
     def __init__(self,descriptor,verbose=False):
         self.descriptor=descriptor
         self.verbose=verbose
-        self.filein1=descriptor['filein1']
+        self.file_data_in=descriptor['file_data_in']
         self.file_anncycle_raw=descriptor['file_anncycle_raw']
         self.file_anncycle_smooth=descriptor['file_anncycle_smooth']
-        x1=self.file_anncycle_smooth.split('.')
-        self.file_anncycle_smooth_leap=x1[0]+'_leap.'+x1[1]
+        self.file_anncycle_smooth_leap=self.file_anncycle_smooth.replace('.','_leap.')
         self.file_anncycle_rm=descriptor['file_anncycle_rm']
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
@@ -927,7 +1060,7 @@ class AnnualCycle(object):
         self.year1=descriptor['year1']
         self.year2=descriptor['year2']
         self.nharm=descriptor['nharm']
-        self.data_in=iris.load(self.filein1,self.name)
+        self.data_in=iris.load(self.file_data_in,self.name)
         # Get first time in input data
         x1=self.data_in[0].coord('time')[0]
         x2=x1.cell(0)[0]
@@ -948,13 +1081,14 @@ class AnnualCycle(object):
                 'year1: {0.year1!s} \n'+\
                 'year2: {0.year2!s} \n'+\
                 'nharm: {0.nharm!s} \n'+\
-                'filein1: {0.filein1!s} \n'+\
+                'file_data_in: {0.file_data_in!s} \n'+\
                 'data_in: {0.data_in!s} \n'+\
                 'time1: {0.time1!s} \n'+\
                 'time2: {0.time2!s} \n'+\
                 'file_anncycle_raw: {0.file_anncycle_raw!s} \n'+\
                 'file_anncycle_smooth: {0.file_anncycle_smooth!s} \n'+\
-                'file_anncycle_smooth_leap: {0.file_anncycle_smooth_leap!s} \n'+h1b
+                'file_anncycle_smooth_leap: {0.file_anncycle_smooth_leap!s} \n'+\
+                'file_anncycle_rm: {0.file_anncycle_rm!s} \n'+h1b
             return(ss.format(self))
         else:
             return 'AnnualCycle instance'
@@ -966,15 +1100,13 @@ class AnnualCycle(object):
         a leap year.
 
         Code is rather slow as it loops over each day of the year, and
-        reads in all data (eg 1 Jan's) for that day and averages over
-        them.  Superceded by new version of f_anncycle_raw, but have
-        left the code here as it has some good iris pointers.
+        reads in all data (e.g., 1 Jan's) for that day and averages
+        over them.  Superceded by new version of f_anncycle_raw, but
+        have left the code here as it has some good iris pointers.
 
         Create data_anncycle_raw attribute.
         """
-
         raise UserWarning('Use f_anncycle_raw instead')
-
         if self.frequency!='d':
             raise UserWarning('Annual cycle presently only coded up for daily data.')
         # Set first day as 1 Jan year 1 (time coord will be relative to this)
@@ -1032,17 +1164,17 @@ class AnnualCycle(object):
 
         Create data_anncycle_raw attribute.
         """
-
         if self.frequency!='d':
             raise UserWarning('Annual cycle presently only coded up for daily data.')
         kyear=0
         # First year
         yearc=self.year1
         kyear+=1
+        print('kyear: {0!s}'.format(kyear))
         # Extract 1 Jan to 28 Feb of current year
         time1=datetime.datetime(yearc,1,1)
         time2=datetime.datetime(yearc,2,28)
-        print(kyear,time1,time2)
+        print(time1,time2)
         time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
         with iris.FUTURE.context(cell_datetime_objects=True):
             x1=self.data_in.extract(time_constraint)
@@ -1051,6 +1183,7 @@ class AnnualCycle(object):
         # Extract 1 Mar to 31 Dec of current year
         time1=datetime.datetime(yearc,3,1)
         time2=datetime.datetime(yearc,12,31)
+        print(time1,time2)
         time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
         with iris.FUTURE.context(cell_datetime_objects=True):
             x1=self.data_in.extract(time_constraint)
@@ -1058,13 +1191,13 @@ class AnnualCycle(object):
         mardec.remove_coord('time')
         #
         # Loop over remaining years and add contributions
-        #for yearc in range(self.year1+1,self.year2+1):
-        for yearc in range(self.year1+1,self.year1+2):
+        for yearc in range(self.year1+1,self.year2+1):
             kyear+=1
+            print('kyear: {0!s}'.format(kyear))
             # Extract 1 Jan to 28 Feb of current year
             time1=datetime.datetime(yearc,1,1)
             time2=datetime.datetime(yearc,2,28)
-            print(kyear,time1,time2)
+            print(time1,time2)
             time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
             with iris.FUTURE.context(cell_datetime_objects=True):
                 x1=self.data_in.extract(time_constraint)
@@ -1073,6 +1206,7 @@ class AnnualCycle(object):
             # Extract 1 Mar to 31 Dec of current year
             time1=datetime.datetime(yearc,3,1)
             time2=datetime.datetime(yearc,12,31)
+            print(time1,time2)
             time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
             with iris.FUTURE.context(cell_datetime_objects=True):
                 x1=self.data_in.extract(time_constraint)
@@ -1114,11 +1248,10 @@ class AnnualCycle(object):
             iris.save(self.data_anncycle_raw,self.file_anncycle_raw)
 
     def f_read_anncycle_raw(self):
-        """Read raw annual cycle.
+        """Read previously created raw annual cycle.
 
         Create data_anncycle_raw attribute.
         """
-
         self.data_anncycle_raw=iris.load_cube(self.file_anncycle_raw,self.name)
 
     def f_anncycle_smooth(self):
@@ -1127,8 +1260,8 @@ class AnnualCycle(object):
         This is created from the mean and first self.nharm annual
         harmonics of the raw annual cycle.
 
-        f(t_i)= \overline f + \Sum_{k=1}^\{N/2} A_k \cos \omega_k t
-                                              + B_k \sin \omega_k t
+        f(t_i)= \overline f + \Sum_{k=1}^\{nharm} A_k \cos \omega_k t
+                                                + B_k \sin \omega_k t
 
         \omega_k = 2\pi k / T
 
@@ -1138,13 +1271,11 @@ class AnnualCycle(object):
 
         Create data_mean, data_anncycle_smooth,
         data_anncycle_smooth_leap attributes.
-
         """
         # Calculate annual mean
         print('data_anncycle_raw.shape: {0!s}'.format(self.data_anncycle_raw.shape))
         self.data_mean=self.data_anncycle_raw.collapsed('time',iris.analysis.MEAN)
         print('data_mean.shape: {0!s}'.format(self.data_mean.shape))
-
         # Calculate cosine and sine harmonics
         # Create a (ntime,1) array of itime
         ntime=self.data_anncycle_raw.coord('time').shape[0]
@@ -1234,7 +1365,6 @@ class AnnualCycle(object):
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.data_anncycle_smooth,self.file_anncycle_smooth)
         #
-        #
         # Create alternate smoothed annual cycle for leap year, with 29 Feb
         # represented by a copy of 28 Feb.
         # Use year 4 for this, as this is a leap year.
@@ -1277,19 +1407,18 @@ class AnnualCycle(object):
         # Save smoothed annual cycle for leap year
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.data_anncycle_smooth_leap,self.file_anncycle_smooth_leap)
-        
 
     def f_read_anncycle_smooth(self):
-        """Read smoothed annual cycle.
+        """Read previously calculated smoothed annual cycle.
 
         Create data_anncycle_smooth and data_anncycle_smooth_leap
-        attributes.  """
-
+        attributes.
+        """
         self.data_anncycle_smooth=iris.load_cube(self.file_anncycle_smooth,self.name)
         self.data_anncycle_smooth_leap=iris.load_cube(self.file_anncycle_smooth_leap,self.name)
 
     def f_subtract_anncycle(self):
-        """Subtract smoothed annual cycle from input data.
+        """Subtract smoothed annual cycle from input data to create anomaly data.
 
         Read in input data and process and write output data (anomaly
         with smoothed annual cycle subtracted) in chunks of
@@ -1300,12 +1429,11 @@ class AnnualCycle(object):
 
         Create data_anncycle_rm attribute.
         """
-
         # Set initial value of current year
         yearc=self.time1.year
         # Set final value of current year
         year_end=self.time2.year
-        
+        #
         if self.outfile_frequency=='year':
             # Loop over years
             while yearc<=year_end:
@@ -1320,7 +1448,7 @@ class AnnualCycle(object):
                     leap=False
                     smooth_year_number=1
                     anncycle_smooth=self.data_anncycle_smooth
-                print(yearc,leap)
+                print('yearc,leap: {0!s}, {1!s}'.format(yearc,leap))
                 # Set start and end times for input and anncycle data
                 time_beg_in=datetime.datetime(yearc,1,1)
                 if time_beg_in<self.time1:
@@ -1362,8 +1490,6 @@ class AnnualCycle(object):
                 # 'point' seems the most appropriate, actions on each point?!
                 cm=iris.coords.CellMethod('point','time',comments='smoothed annual cycle: '+str(self.year1)+'-'+str(self.year2)+': mean + '+str(self.nharm)+' harmonics')
                 data_anom.add_cell_method(cm)
-                # Set data_anncycle_rm attribute
-                self.data_anncycle_rm=data_anom
                 # Save anomaly data (anncycle subtracted)
                 fileout=self.file_anncycle_rm.replace('*',str(yearc))
                 print('fileout: {0!s}'.format(fileout))
@@ -1371,13 +1497,15 @@ class AnnualCycle(object):
                     iris.save(self.data_anncycle_rm,fileout)
                 # Increment current year
                 yearc+=1
+            # Set data_anncycle_rm attribute
+            self.data_anncycle_rm=iris.load(self.file_anncycle_rm,self.name)
         else:
             raise UserWarning('Need code for other outfile_frequency values.')
 
     def f_read_subtract_anncycle(self):
-        """Read anomaly data (annual cycle subtracted).
+        """Read previously calculatedanomaly data (annual cycle subtracted).
 
-
+        Create data_anncycle_rm attribute.
         """
-        self.data_anncycle_rm=iris.load_cube(self.file_anncycle_rm,self.name)
+        self.data_anncycle_rm=iris.load(self.file_anncycle_rm,self.name)
         
