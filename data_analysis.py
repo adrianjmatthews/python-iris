@@ -42,6 +42,8 @@ import pdb
 import numpy as np
 import matplotlib.pyplot as plt
 
+hello='world'
+
 h1a='<<<=============================================================\n'
 h1b='=============================================================>>>\n'
 h2a='<<<---------------------------\n'
@@ -97,11 +99,11 @@ def source_info(self):
     self.level_type=xx[1]
     self.frequency=xx[2]
     # Check data_source attribute is valid
-    valid_data_sources=['ncepdoe','olrcdr','sstrey']
+    valid_data_sources=['ncepdoe','olrcdr','olrinterp','sstrey']
     if self.data_source not in valid_data_sources:
         raise UserWarning('data_source {0.data_source!s} not vaild'.format(self))
     # Set outfile_frequency attribute depending on source information
-    if self.source in ['ncepdoe_plev_d','olrcdr_toa_d','sstrey_sfc_w','sstrey_sfc_d']:
+    if self.source in ['ncepdoe_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d']:
         self.outfile_frequency='year'
     else:
         raise UserWarning('Need to specify outfile_frequency for this data source.')
@@ -545,6 +547,18 @@ class DataConverter(object):
         self.name=var_name2standard_name[self.var_name]
         self.level=descriptor['level']
         self.basedir=descriptor['basedir']
+        self.file_mask=False # Default value, overwrite if exists
+        self.mask=False # Ditto
+        if descriptor['file_mask']:
+            self.file_mask=os.path.join(self.basedir,self.source,'raw_input',descriptor['file_mask'])
+            with iris.FUTURE.context(netcdf_promote=True):
+                x1=iris.load(self.file_mask,callback=clean_callback)
+            x2=x1.concatenate_cube()
+            self.mask=x2.data # numpy array of mask data
+            if len(self.mask.shape)!=3 and self.mask.shape[0]!=1:
+                raise UserWarning('Expecting 3-d mask of shape (1,?,?)')
+            if self.source=='sstrey_sfc_w':
+                self.mask=1-self.mask # Switch the 1's and 0's
         if self.verbose:
             print(self)
         
@@ -557,7 +571,10 @@ class DataConverter(object):
                 'source: {0.source!s} \n'+\
                 'var_name: {0.var_name!s} \n'+\
                 'name: {0.name!s} \n'+\
-                'level: {0.level!s} \n'+h1b
+                'level: {0.level!s} \n'
+            if self.file_mask:
+                ss+='file_mask: {0.file_mask!s} \n'+\
+                     'mask.shape: {0.mask.shape!s} \n'+h1b
             return ss.format(self)
         else:
             return self.__repr__()
@@ -578,7 +595,7 @@ class DataConverter(object):
         # Set input file name(s)
         if self.data_source in ['ncepdoe',]:
             self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.'+str(self.year)+'.nc')
-        elif self.source in ['olrcdr_toa_d',]:
+        elif self.source in ['olrcdr_toa_d','olrinterp_toa_d']:
             self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.day.mean.nc')
         elif self.source in ['sstrey_sfc_w',]:
             if 1981<=self.year<=1989:
@@ -592,10 +609,11 @@ class DataConverter(object):
         # Set level constraint (set to False if none)
         if self.data_source in ['ncepdoe',] and self.level_type=='plev':
             level_constraint=iris.Constraint(Level=self.level)
-        elif self.source in ['olrcdr_toa_d','sstrey_sfc_w']:
+        elif self.source in ['olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w']:
             level_constraint=False
         # Load cube
-        self.cube=iris.load_cube(self.filein1,self.name,callback=clean_callback)
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.cube=iris.load_cube(self.filein1,self.name,callback=clean_callback)
         xx=self.cube.coord('time')
         xx.bounds=None # Hack for new netcdf4 ncepdoe which have physically implausible time bounds
         with iris.FUTURE.context(cell_datetime_objects=True):
@@ -603,6 +621,20 @@ class DataConverter(object):
                 self.cube=self.cube.extract(level_constraint & time_constraint)
             else:
                 self.cube=self.cube.extract(time_constraint)
+        # Apply mask if appropriate
+        if self.file_mask:
+            print('Applying mask')
+            if self.cube.dim_coords[0].name()!='time':
+                raise UserWarning('First dimension of cube needs to be time.')
+            # Broadcast ntime copies of mask (1,?,?) to (ntime,?,?)
+            ntime=self.cube.shape[0]
+            ngrid=self.mask.shape[1]*self.mask.shape[2]
+            x1=self.mask.reshape((1,ngrid))
+            ones=np.ones((ntime,1))
+            x2=np.dot(ones,x1)
+            x3=x2.reshape((ntime,self.mask.shape[1],self.mask.shape[2]))
+            # Apply mask
+            self.cube.data=np.ma.array(self.cube.data,mask=x3)
         if self.verbose==2:
             ss=h2a+'read_cube. \n'+\
                 'time1: {0!s} \n'+\
@@ -611,10 +643,8 @@ class DataConverter(object):
         
     def format_cube(self):
         """Change cube to standard format."""
-        # Set self.cube.var_name to self.var_name
-        if self.cube.var_name!=self.var_name:
-            self.cube.varn_name=self.var_name
-            print('format_cube: Changed {0.cube.var_name!s} to {0.var_name!s}'.format(self))
+        self.cube.var_name=self.var_name
+        self.cube.standard_name=self.name
         # Reynolds SST weekly data.  Time stamp is at beginning of week.
         # Change so it is at the end of the week, by adding 3 (days).
         # NB This can bump a data point at the end of the year into the next
@@ -941,7 +971,7 @@ class Interpolate(object):
                 'file_data_out: {0.file_data_out!s} \n'+h1b
             return(ss.format(self))
         else:
-            return 'AnnualCycle instance'
+            return 'Interpolate instance'
 
     def f_interpolate_time(self):
         """Interpolate over time."""
@@ -997,6 +1027,78 @@ class Interpolate(object):
         else:
             raise UserWarning('Need code for interpolation to other than daily data.')
         
+
+#==========================================================================
+
+class Hovmoller(object):
+    """Create a Hovmoller object.
+
+    Attributes:
+
+    """
+    def __init__(self,descriptor,verbose=False):
+        self.descriptor=descriptor
+        self.verbose=verbose
+        self.file_data_in=descriptor['file_data_in']
+        self.file_data_out=descriptor['file_data_out']
+        self.var_name=descriptor['var_name']
+        self.name=var_name2standard_name[self.var_name]
+        self.source=descriptor['source']
+        source_info(self)
+        self.band_name=descriptor['band_name']
+        self.band_val1=descriptor['band_val1']
+        self.band_val2=descriptor['band_val2']
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_in=iris.load(self.file_data_in,self.name)
+        if self.verbose:
+            print(self)        
+
+    def __repr__(self):
+        return 'Hovmoller({0.descriptor!r},verbose={0.verbose!r})'.format(self)
+
+    def __str__(self):
+        if self.verbose==2:
+            ss=h1a+'Hovmoller instance \n'+\
+                'file_data_in: {0.file_data_in!s} \n'+\
+                'data_in: {0.data_in!s} \n'+\
+                'source: {0.source!s} \n'+\
+                'band_name: {0.band_name!s} \n'+\
+                'band_val1: {0.band_val1!s} \n'+\
+                'band_val2: {0.band_val2!s} \n'+\
+                'file_data_out: {0.file_data_out!s} \n'+h1b
+            return(ss.format(self))
+        else:
+            return 'Interpolate instance'
+
+    def f_hovmoller(self):
+        """Create cube of Hovmoller data and save."""
+        # Extract input data for current time block, and 
+        # for dimension band_name, between band_val1 and band_val1
+        time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
+        if self.band_name=='latitude':
+            band_constraint=iris.Constraint(latitude=lambda cell: self.band_val1 <=cell<= self.band_val2)
+        elif self.band_name=='longitude':
+            band_constraint=iris.Constraint(longitude=lambda cell: self.band_val1 <=cell<= self.band_val2)
+        else:
+            raise UserWarning('Invalid band_name.')
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x1=self.data_in.extract(time_constraint & band_constraint)
+        x2=x1.concatenate_cube()
+        self.cube=x2
+        # Average over dimension band_name
+        x3=x2.collapsed(self.band_name,iris.analysis.MEAN)
+        # Add a cell method to further describe averaging
+        cm=iris.coords.CellMethod('mean','Mean over {0.band_name!s}: {0.band_val1!s} to {0.band_val2!s}'.format(self))
+        if self.verbose:
+            print(cm)
+        x3.add_cell_method(cm)
+        self.data_hov=x3
+        # Save Hovmoller data
+        fileout=self.file_data_out.replace('*',str(self.year))
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.data_hov,fileout)
+
 
 #==========================================================================
 
@@ -1194,6 +1296,11 @@ class AnnualCycle(object):
         for yearc in range(self.year1+1,self.year2+1):
             kyear+=1
             print('kyear: {0!s}'.format(kyear))
+            # Do not use 1978 for olrinterp as missing data from 16 Mar 1978
+            # to 31 Dec 1978.  Just use data from 1979 onwards to calculate
+            # annual cycle
+            if self.data_source=='olrinterp' and yearc==1978:
+                raise UserWarning('Cannot use 1978 for olrinterp because of missing data.')
             # Extract 1 Jan to 28 Feb of current year
             time1=datetime.datetime(yearc,1,1)
             time2=datetime.datetime(yearc,2,28)
@@ -1216,8 +1323,13 @@ class AnnualCycle(object):
             janfeb=iris.analysis.maths.add(janfeb,janfebc)
             mardec=iris.analysis.maths.add(mardec,mardecc)
         # Divide by number of years to calculate mean
+        # Bizarrely, this converts units of temperature from degC to kelvin!
+        # So save units and copy them back.
+        x1=janfeb.units
         janfeb=iris.analysis.maths.divide(janfeb,kyear)
         mardec=iris.analysis.maths.divide(mardec,kyear)
+        janfeb.units=x1
+        mardec.units=x1
         # Create and add a time coordinate for year 1, and attributes
         time_first=datetime.datetime(year=1,month=1,day=1)
         time_units='days since '+str(time_first)
@@ -1361,7 +1473,6 @@ class AnnualCycle(object):
         # Set data_anncycle_smooth attribute
         self.data_anncycle_smooth=x13
         # Save smoothed annual cycle
-        #pdb.set_trace(); print('@@@ Stop here.')
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.data_anncycle_smooth,self.file_anncycle_smooth)
         #
@@ -1488,13 +1599,13 @@ class AnnualCycle(object):
                 # Add a cell method to describe the smoothed annual cycle
                 # There is a small list of allowed method names (1st argument)
                 # 'point' seems the most appropriate, actions on each point?!
-                cm=iris.coords.CellMethod('point','time',comments='smoothed annual cycle: '+str(self.year1)+'-'+str(self.year2)+': mean + '+str(self.nharm)+' harmonics')
+                cm=iris.coords.CellMethod('point','time',comments='anomaly: subtracted smoothed annual cycle: '+str(self.year1)+'-'+str(self.year2)+': mean + '+str(self.nharm)+' harmonics')
                 data_anom.add_cell_method(cm)
                 # Save anomaly data (anncycle subtracted)
                 fileout=self.file_anncycle_rm.replace('*',str(yearc))
                 print('fileout: {0!s}'.format(fileout))
                 with iris.FUTURE.context(netcdf_no_unlimited=True):
-                    iris.save(self.data_anncycle_rm,fileout)
+                    iris.save(data_anom,fileout)
                 # Increment current year
                 yearc+=1
             # Set data_anncycle_rm attribute
