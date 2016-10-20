@@ -521,6 +521,10 @@ class DataConverter(object):
     
     self.var_name : string name of variable, e.g., 'uwnd'.
 
+    self.standard_name : 
+
+    self.raw_name : string name of variable in the raw input file.
+
     self.level : integer single level, e.g., 200 for 200 hPa.  Level naming
     convention:
        1000, 850, 200, etc. for pressure level data (hPa)
@@ -556,6 +560,8 @@ class DataConverter(object):
             x2=x1.concatenate_cube()
             self.mask=x2.data # numpy array of mask data
             if len(self.mask.shape)!=3 and self.mask.shape[0]!=1:
+                # Mask should be 2-D (eg lat,lon) but with a third time
+                # dimension of length 1
                 raise UserWarning('Expecting 3-d mask of shape (1,?,?)')
             if self.source=='sstrey_sfc_w':
                 self.mask=1-self.mask # Switch the 1's and 0's
@@ -611,9 +617,13 @@ class DataConverter(object):
             level_constraint=iris.Constraint(Level=self.level)
         elif self.source in ['olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w']:
             level_constraint=False
+        # Set raw_name of variable in raw input data
+        self.raw_name=self.name
+        if self.data_source in ['olrinterp',]:
+            self.raw_name='olr'
         # Load cube
         with iris.FUTURE.context(netcdf_promote=True):
-            self.cube=iris.load_cube(self.filein1,self.name,callback=clean_callback)
+            self.cube=iris.load_cube(self.filein1,self.raw_name,callback=clean_callback)
         xx=self.cube.coord('time')
         xx.bounds=None # Hack for new netcdf4 ncepdoe which have physically implausible time bounds
         with iris.FUTURE.context(cell_datetime_objects=True):
@@ -645,6 +655,7 @@ class DataConverter(object):
         """Change cube to standard format."""
         self.cube.var_name=self.var_name
         self.cube.standard_name=self.name
+        #
         # Reynolds SST weekly data.  Time stamp is at beginning of week.
         # Change so it is at the end of the week, by adding 3 (days).
         # NB This can bump a data point at the end of the year into the next
@@ -989,7 +1000,7 @@ class Interpolate(object):
             self.time2_out_val=self.time_units.date2num(self.time2_out)
             if 'day' in self.time_units.name:
                 time_diff=1
-                self.sample_points=[('time',np.arange(self.time1_out_val,self.time2_out_val+time_diff,time_diff))]
+                self.sample_points=[('time',np.arange(self.time1_out_val,self.time2_out_val,time_diff))]
             else:
                 raise UserWarning('Need code for time units that are not in days.')
             # Create cube (from cube list) of input data for interpolation
@@ -1035,12 +1046,27 @@ class Hovmoller(object):
 
     Attributes:
 
+    self.data_in : iris cube list of all input data.
+
+    self.data_hov_current : iris cube of Hovmoller of current data
+    (e.g., year).
+
+    self.data_hov : iris cube list of all Hovmoller data.
+
+    self.file_data_in : path name for file(s) of input data.  Contains a
+    wild card * character, which will be replaced by, e.g., year
+    numbers (if self.outfile_frequency is 'year').
+
+    self.file_data_hov : path name for file(s) of Hovmoller data.
+    Contains a wild card * character, which will be replaced by, e.g.,
+    year numbers (if self.outfile_frequency is 'year').
     """
+
     def __init__(self,descriptor,verbose=False):
         self.descriptor=descriptor
         self.verbose=verbose
         self.file_data_in=descriptor['file_data_in']
-        self.file_data_out=descriptor['file_data_out']
+        self.file_data_hov=descriptor['file_data_hov']
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
         self.source=descriptor['source']
@@ -1065,13 +1091,16 @@ class Hovmoller(object):
                 'band_name: {0.band_name!s} \n'+\
                 'band_val1: {0.band_val1!s} \n'+\
                 'band_val2: {0.band_val2!s} \n'+\
-                'file_data_out: {0.file_data_out!s} \n'+h1b
+                'file_data_hov: {0.file_data_hov!s} \n'+h1b
             return(ss.format(self))
         else:
             return 'Interpolate instance'
 
     def f_hovmoller(self):
-        """Create cube of Hovmoller data and save."""
+        """Create cube of Hovmoller data and save.
+
+        Create data_hov_current attribute.
+        """
         # Extract input data for current time block, and 
         # for dimension band_name, between band_val1 and band_val1
         time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
@@ -1088,17 +1117,24 @@ class Hovmoller(object):
         # Average over dimension band_name
         x3=x2.collapsed(self.band_name,iris.analysis.MEAN)
         # Add a cell method to further describe averaging
-        cm=iris.coords.CellMethod('mean','Mean over {0.band_name!s}: {0.band_val1!s} to {0.band_val2!s}'.format(self))
+        str1='Mean over {0.band_name!s} {0.band_val1!s} to {0.band_val2!s}'.format(self)
+        cm=iris.coords.CellMethod('mean',str1)
         if self.verbose:
             print(cm)
         x3.add_cell_method(cm)
-        self.data_hov=x3
+        self.data_hov_current=x3
         # Save Hovmoller data
-        fileout=self.file_data_out.replace('*',str(self.year))
+        fileout=self.file_data_hov.replace('*',str(self.year))
         print('fileout: {0!s}'.format(fileout))
         with iris.FUTURE.context(netcdf_no_unlimited=True):
-            iris.save(self.data_hov,fileout)
+            iris.save(self.data_hov_current,fileout)
 
+    def f_read_hovmoller(self):
+        """Read previously calculated Hovmoller data.
+
+        Create data_hov attribute.
+        """
+        self.data_hov=iris.load(self.file_data_hov,self.name)
 
 #==========================================================================
 
@@ -1541,7 +1577,8 @@ class AnnualCycle(object):
         Create data_anncycle_rm attribute.
         """
         # Set initial value of current year
-        yearc=self.time1.year
+        #yearc=self.time1.year
+        yearc=2016
         # Set final value of current year
         year_end=self.time2.year
         #
