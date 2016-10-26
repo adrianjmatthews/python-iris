@@ -70,6 +70,7 @@ var_name2standard_name={
     'ta':'air_temperature',
     'olr':'toa_outgoing_longwave_flux',
     'sst':'sea_surface_temperature',
+    'lhfd':'surface_downward_latent_heat_flux',
     }
 
 # source_information is a dictionary of dictionaries with information on data
@@ -99,11 +100,11 @@ def source_info(self):
     self.level_type=xx[1]
     self.frequency=xx[2]
     # Check data_source attribute is valid
-    valid_data_sources=['ncepdoe','olrcdr','olrinterp','sstrey']
+    valid_data_sources=['ncepdoe','olrcdr','olrinterp','sstrey','tropflux']
     if self.data_source not in valid_data_sources:
         raise UserWarning('data_source {0.data_source!s} not vaild'.format(self))
     # Set outfile_frequency attribute depending on source information
-    if self.source in ['ncepdoe_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d']:
+    if self.source in ['ncepdoe_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
         self.outfile_frequency='year'
     else:
         raise UserWarning('Need to specify outfile_frequency for this data source.')
@@ -160,7 +161,8 @@ def clean_callback(cube,field,filename):
               'Conventions','GRIB_id','GRIB_name','comments','institution',
               'least_significant_digit','level_desc','parent_stat',
               'platform','precision','source','statistic','title','var_desc',
-              'NCO']
+              'NCO','creation_date','invalid_units','metodology',
+              'producer_agency','time_range','website','short_name']
     for attribute in att_list:
         if attribute in cube.attributes:
             del cube.attributes[attribute]
@@ -603,6 +605,9 @@ class DataConverter(object):
             self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.'+str(self.year)+'.nc')
         elif self.source in ['olrcdr_toa_d','olrinterp_toa_d']:
             self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.day.mean.nc')
+        elif self.source in ['tropflux_sfc_d']:
+            if self.var_name=='lhfd':
+                self.filein1=os.path.join(self.basedir,self.source,'raw_input','lhf_tropflux_1d_'+str(self.year)+'.nc')
         elif self.source in ['sstrey_sfc_w',]:
             if 1981<=self.year<=1989:
                 self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.wkmean.1981-1989.nc')
@@ -615,12 +620,17 @@ class DataConverter(object):
         # Set level constraint (set to False if none)
         if self.data_source in ['ncepdoe',] and self.level_type=='plev':
             level_constraint=iris.Constraint(Level=self.level)
-        elif self.source in ['olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w']:
+        elif self.source in ['olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','tropflux_sfc_d']:
             level_constraint=False
+        else:
+            raise UserWarning('Set an instruction for level_constraint.')
         # Set raw_name of variable in raw input data
         self.raw_name=self.name
         if self.data_source in ['olrinterp',]:
             self.raw_name='olr'
+        elif self.data_source in ['tropflux',]:
+            if self.var_name=='lhfd':
+                self.raw_name='lhf'
         # Load cube
         with iris.FUTURE.context(netcdf_promote=True):
             self.cube=iris.load_cube(self.filein1,self.raw_name,callback=clean_callback)
@@ -656,7 +666,8 @@ class DataConverter(object):
         self.cube.var_name=self.var_name
         self.cube.standard_name=self.name
         #
-        # Reynolds SST weekly data.  Time stamp is at beginning of week.
+        # Reynolds SST weekly data.
+        # Time stamp is at beginning of week.
         # Change so it is at the end of the week, by adding 3 (days).
         # NB This can bump a data point at the end of the year into the next
         # year, eg 1982-12-29 is changed to 1984-01-01.  This should not
@@ -675,6 +686,54 @@ class DataConverter(object):
             self.cube.remove_coord('time')
             self.cube.add_dim_coord(tcoord2,0)
             print('Added 3 days to time coord so time is now in centre of 7-day mean.')
+        #
+        # Tropflux daily data.
+        # Time stamp is at 12 UTC. Change to 00 UTC by subtracting 0.5 (days).
+        # Also, longitude runs from 30.5 to 279.5 (19.5E), missing 10 deg long over Africa
+        # Set it to run from 0.5 to 359.5 with no missing longitude
+        if self.source=='tropflux_sfc_d':
+            tcoord=self.cube.coord('time')
+            time_units=tcoord.units
+            if 'day' not in time_units.name:
+                raise UserWarning('Expecting time units in days.')
+            # Cannot simply subtract 0.5 because of round off, leading to later errors
+            # e.g., time value on 1 Jan 2016 is 24105.999999999534 not 24105.5
+            # Use divmod to achieve same end
+            #time_val=tcoord.points-0.5
+            time_val=divmod(tcoord.points,1)[0]
+            tcoord2=iris.coords.DimCoord(time_val,standard_name='time',units=time_units)
+            if self.verbose==2:
+                print('tcoord: {0!s}'.format(tcoord))
+                print('tcoord2: {0!s}'.format(tcoord2))
+            self.cube.remove_coord('time')
+            self.cube.add_dim_coord(tcoord2,0)
+            print('Subtracted 0.5 days from time coord so time is now at 00 UTC not 12 UTC.')
+            # Longitude
+            # 0.5-19.5E
+            lon_constraint1=iris.Constraint(longitude = lambda cell: 360.5 <= cell <= 379.5)
+            x1=self.cube.extract(lon_constraint1)
+            # create cube of missing values at missing longitudes 20.5-29.5E
+            shape=x1.shape[:-1]+(10,)
+            x2=1e20*conv_float32(np.ones(shape))
+            x2=np.ma.array(x2,mask=x2)
+            # 30.5-359.5E
+            lon_constraint3=iris.Constraint(longitude = lambda cell:  30.5 <= cell <= 359.5)
+            x3=self.cube.extract(lon_constraint3)
+            # Concatenate the three longitude bands
+            x4=np.ma.concatenate((x1.data,x2,x3.data),2)
+            # Create new longitude axis
+            lon_val=conv_float32(np.arange(0.5,359.5+1e-6,1.0))
+            lon_units=x1.coord('longitude').units
+            loncoord=iris.coords.DimCoord(lon_val,standard_name='longitude',units=lon_units,circular=True)
+            # Create iris cube
+            kdim=0
+            dim_coords=[]
+            for xx in x1.dim_coords[:-1]:
+                dim_coords.append([xx,kdim])
+                kdim+=1
+            dim_coords.append([loncoord,kdim])
+            x5=iris.cube.Cube(x4,standard_name=x1.standard_name,var_name=x1.var_name,units=x1.units,attributes=x1.attributes,cell_methods=x1.cell_methods,dim_coords_and_dims=dim_coords)
+            self.cube=x5
 
     def write_cube(self):
         """Write cube to netcdf file."""
