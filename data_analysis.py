@@ -41,6 +41,7 @@ import mypaths
 import pdb
 import numpy as np
 import matplotlib.pyplot as plt
+from windspharm.iris import VectorWind
 
 hello='world'
 
@@ -100,11 +101,11 @@ def source_info(self):
     self.level_type=xx[1]
     self.frequency=xx[2]
     # Check data_source attribute is valid
-    valid_data_sources=['ncepdoe','olrcdr','olrinterp','sstrey','tropflux']
+    valid_data_sources=['ncepdoe','ncepncar','olrcdr','olrinterp','sstrey','tropflux']
     if self.data_source not in valid_data_sources:
         raise UserWarning('data_source {0.data_source!s} not vaild'.format(self))
     # Set outfile_frequency attribute depending on source information
-    if self.source in ['ncepdoe_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
+    if self.source in ['ncepdoe_plev_d','ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
         self.outfile_frequency='year'
     else:
         raise UserWarning('Need to specify outfile_frequency for this data source.')
@@ -601,13 +602,12 @@ class DataConverter(object):
         else:
             raise UserWarning("Need to write code for outfile_frequency other than 'year'.")
         # Set input file name(s)
-        if self.data_source in ['ncepdoe',]:
+        if self.source in ['ncepdoe_plev_d',]:
             self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.'+str(self.year)+'.nc')
+        elif self.source in ['ncepncar_sfc_d',]:
+            self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.sig995.'+str(self.year)+'.nc')
         elif self.source in ['olrcdr_toa_d','olrinterp_toa_d']:
             self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.day.mean.nc')
-        elif self.source in ['tropflux_sfc_d']:
-            if self.var_name=='lhfd':
-                self.filein1=os.path.join(self.basedir,self.source,'raw_input','lhf_tropflux_1d_'+str(self.year)+'.nc')
         elif self.source in ['sstrey_sfc_w',]:
             if 1981<=self.year<=1989:
                 self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.wkmean.1981-1989.nc')
@@ -615,18 +615,24 @@ class DataConverter(object):
                 self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.wkmean.1990-present.nc')
             else:
                 raise UserWarning('Invalid year')
+        elif self.source in ['tropflux_sfc_d']:
+            if self.var_name=='lhfd':
+                self.filein1=os.path.join(self.basedir,self.source,'raw_input','lhf_tropflux_1d_'+str(self.year)+'.nc')
         else:
             raise UserWarning('Data source not recognised')
         # Set level constraint (set to False if none)
         if self.data_source in ['ncepdoe',] and self.level_type=='plev':
             level_constraint=iris.Constraint(Level=self.level)
-        elif self.source in ['olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','tropflux_sfc_d']:
+        elif self.source in ['ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','tropflux_sfc_d']:
             level_constraint=False
         else:
             raise UserWarning('Set an instruction for level_constraint.')
         # Set raw_name of variable in raw input data
         self.raw_name=self.name
-        if self.data_source in ['olrinterp',]:
+        if self.data_source in ['ncepncar',]:
+            if self.var_name in['uwnd','vwnd']:
+                self.raw_name=self.var_name
+        elif self.data_source in ['olrinterp',]:
             self.raw_name='olr'
         elif self.data_source in ['tropflux',]:
             if self.var_name=='lhfd':
@@ -663,6 +669,8 @@ class DataConverter(object):
         
     def format_cube(self):
         """Change cube to standard format."""
+        #
+        # Universal format changes
         self.cube.var_name=self.var_name
         self.cube.standard_name=self.name
         #
@@ -1153,7 +1161,7 @@ class Hovmoller(object):
                 'file_data_hov: {0.file_data_hov!s} \n'+h1b
             return(ss.format(self))
         else:
-            return 'Interpolate instance'
+            return 'Hovmoller instance'
 
     def f_hovmoller(self):
         """Create cube of Hovmoller data and save.
@@ -1194,6 +1202,188 @@ class Hovmoller(object):
         Create data_hov attribute.
         """
         self.data_hov=iris.load(self.file_data_hov,self.name)
+
+#==========================================================================
+
+class Wind(object):
+    """Create a Wind object.
+
+    Wrapper for windspharm VectorWind object to handle file i/o.
+
+    Attributes (following VectorWind):
+
+    self.uwnd : iris cube of u wind
+    self.vwnd : iris cube of v wind
+    self.psi : iris cube of streamfunction
+    self.chi : iris cube of velocity potential
+    self.vrt : iris cube of relative vorticity
+    self.div : iris cube of divergence
+    self.wndspd : iris cube of wind speed
+
+    self.flag_psi : Boolean flag to compute streamfunction
+    or not.
+
+    Similarly, self.flag_chi, self.flag_vrt, self.flag_div
+
+    self.file_data : path name for file(s) of input data.  Contains a
+    wild card * character, which will be replaced by, e.g., year
+    numbers (if self.outfile_frequency is 'year').  Contains a dummy
+    string'VARNAME' to be replaced by 'uwnd', 'vwnd', 'psi', etc.
+
+    """
+
+    def __init__(self,descriptor,verbose=False):
+        self.descriptor=descriptor
+        self.verbose=verbose
+        self.file_data=descriptor['file_data']
+        # uwnd
+        self.var_name_uwnd='uwnd'
+        self.name_uwnd=var_name2standard_name[self.var_name_uwnd]
+        self.file_data_uwnd=self.file_data.replace('VAR_NAME',self.var_name_uwnd)
+        # vwnd
+        self.var_name_vwnd='vwnd'
+        self.name_vwnd=var_name2standard_name[self.var_name_vwnd]
+        self.file_data_vwnd=self.file_data.replace('VAR_NAME',self.var_name_vwnd)
+        # psi
+        self.flag_psi=descriptor['flag_psi']
+        if self.flag_psi:
+            self.var_name_psi='psi'
+            self.name_psi=var_name2standard_name[self.var_name_psi]
+            self.file_data_psi=self.file_data.replace('VAR_NAME',self.var_name_psi)
+        # chi
+        self.flag_chi=descriptor['flag_chi']
+        if self.flag_chi:
+            self.var_name_chi='chi'
+            self.name_chi=var_name2standard_name[self.var_name_chi]
+            self.file_data_chi=self.file_data.replace('VAR_NAME',self.var_name_chi)
+        # vrt
+        self.flag_vrt=descriptor['flag_vrt']
+        if self.flag_vrt:
+            self.var_name_vrt='vrt'
+            self.name_vrt=var_name2standard_name[self.var_name_vrt]
+            self.file_data_vrt=self.file_data.replace('VAR_NAME',self.var_name_vrt)
+        # div
+        self.flag_div=descriptor['flag_div']
+        if self.flag_div:
+            self.var_name_div='div'
+            self.name_div=var_name2standard_name[self.var_name_div]
+            self.file_data_div=self.file_data.replace('VAR_NAME',self.var_name_div)
+        # wndspd
+        self.flag_wndspd=descriptor['flag_wndspd']
+        if self.flag_wndspd:
+            self.var_name_wndspd='wndspd'
+            self.name_wndspd=var_name2standard_name[self.var_name_wndspd]
+            self.file_data_wndspd=self.file_data.replace('VAR_NAME',self.var_name_wndspd)
+        #
+        self.source=descriptor['source']
+        source_info(self)
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_uwnd=iris.load(self.file_data_uwnd,self.name_uwnd)
+            self.data_vwnd=iris.load(self.file_data_vwnd,self.name_vwnd)
+        if self.verbose:
+            print(self)        
+
+    def __repr__(self):
+        return 'Wind({0.descriptor!r},verbose={0.verbose!r})'.format(self)
+
+    def __str__(self):
+        if self.verbose==2:
+            ss=h1a+'Wind instance \n'+\
+                'source: {0.source!s} \n'+\
+                'file_data: {0.file_data!s} \n'+\
+                'file_data_uwnd: {0.file_data_uwnd!s} \n'+\
+                'file_data_vwnd: {0.file_data_vwnd!s} \n'
+            if self.flag_psi:
+                ss+='file_data_psi: {0.file_data_psi!s} \n'
+            if self.flag_chi:
+                ss+='file_data_chi: {0.file_data_chi!s} \n'
+            if self.flag_vrt:
+                ss+='file_data_vrt: {0.file_data_vrt!s} \n'
+            if self.flag_div:
+                ss+='file_data_div: {0.file_data_div!s} \n'
+            if self.flag_wndspd:
+                ss+='file_data_wndspd: {0.file_data_wndspd!s} \n'
+            ss+=h1b
+            return(ss.format(self))
+        else:
+            return 'Wind instance'
+
+    def f_wind(self):
+        """Calculate and save streamfunction etc."""
+        # Read uwnd and vwnd for current time range
+        time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x1=self.data_uwnd.extract(time_constraint)
+            x2=self.data_vwnd.extract(time_constraint)
+        self.uwnd=x1.concatenate_cube()
+        self.vwnd=x2.concatenate_cube()
+        # Create VectorWind instance
+        self.ww=VectorWind(self.uwnd,self.vwnd)
+        # Both psi and chi
+        if self.flag_psi and self.flag_chi:
+            self.psi,self.chi=self.ww.sfvp()
+            self.psi.var_name=self.var_name_psi
+            self.chi.var_name=self.var_name_chi
+            fileout1=self.file_data_psi.replace('*',str(self.year))
+            fileout2=self.file_data_chi.replace('*',str(self.year))
+            print('fileout1: {0!s}'.format(fileout1))
+            print('fileout2: {0!s}'.format(fileout2))
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.psi,fileout1)
+                iris.save(self.chi,fileout2)
+        # psi only
+        elif self.flag_psi:
+            self.psi=self.ww.streamfunction()
+            self.psi.var_name=self.var_name_psi
+            fileout=self.file_data_psi.replace('*',str(self.year))
+            print('fileout: {0!s}'.format(fileout))
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.psi,fileout)
+        # chi only
+        elif self.flag_chi:
+            self.chi=self.ww.velocitypotential()
+            self.chi.var_name=self.var_name_chi
+            fileout=self.file_data_chi.replace('*',str(self.year))
+            print('fileout: {0!s}'.format(fileout))
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.chi,fileout)
+        # Both vrt and div
+        if self.flag_vrt and self.flag_div:
+            self.vrt,self.div=self.ww.vrtdiv()
+            self.vrt.var_name=self.var_name_vrt
+            self.div.var_name=self.var_name_div
+            fileout1=self.file_data_vrt.replace('*',str(self.year))
+            fileout2=self.file_data_div.replace('*',str(self.year))
+            print('fileout1: {0!s}'.format(fileout1))
+            print('fileout2: {0!s}'.format(fileout2))
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.vrt,fileout1)
+                iris.save(self.div,fileout2)
+        # vrt only
+        elif self.flag_vrt:
+            self.vrt=self.ww.vorticity()
+            self.vrt.var_name=self.var_name_vrt
+            fileout=self.file_data_vrt.replace('*',str(self.year))
+            print('fileout: {0!s}'.format(fileout))
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.vrt,fileout)
+        # div only
+        elif self.flag_div:
+            self.div=self.ww.divergence()
+            self.div.var_name=self.var_name_div
+            fileout=self.file_data_div.replace('*',str(self.year))
+            print('fileout: {0!s}'.format(fileout))
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.div,fileout)
+        # wndspd
+        if self.flag_wndspd:
+            self.wndspd=self.ww.magnitude()
+            self.wndspd.var_name=self.var_name_wndspd
+            fileout=self.file_data_wndspd.replace('*',str(self.year))
+            print('fileout: {0!s}'.format(fileout))
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.wndspd,fileout)
+            
 
 #==========================================================================
 
@@ -1636,8 +1826,8 @@ class AnnualCycle(object):
         Create data_anncycle_rm attribute.
         """
         # Set initial value of current year
-        #yearc=self.time1.year
-        yearc=2016
+        yearc=self.time1.year
+        #yearc=2016
         # Set final value of current year
         year_end=self.time2.year
         #
