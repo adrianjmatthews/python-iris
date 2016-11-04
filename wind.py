@@ -6,19 +6,19 @@ import iris
 
 BASEDIR='/gpfs/afm/matthews/data/'
 
-LEVEL=1; SOURCE='ncepncar_sfc_d'
+LEVEL=850; SOURCE='ncepncar_plev_d'
 
 FILESUF='' # e.g., '', '_rac', '_rac_f20_200'
 
-FLAG_PSI=False
+FLAG_PSI=True
 FLAG_CHI=False
 FLAG_VRT=False
 FLAG_DIV=False
-FLAG_WNDSPD=True
+FLAG_WNDSPD=False
 
 YEAR_BEG=1979; YEAR_END=2016
 
-PLOT=False
+PLOT=True
 
 VERBOSE=2
 
@@ -28,7 +28,7 @@ descriptor={}
 descriptor['basedir']=BASEDIR
 descriptor['level']=LEVEL
 descriptor['source']=SOURCE
-descriptor['file_data']=BASEDIR+SOURCE+'/raw_std/VAR_NAME_'+\
+descriptor['file_data']=BASEDIR+SOURCE+'/std/VAR_NAME_'+\
           str(LEVEL)+FILESUF+'_*.nc'
 descriptor['flag_psi']=FLAG_PSI
 descriptor['flag_chi']=FLAG_CHI
@@ -48,8 +48,9 @@ for year in range(YEAR_BEG,YEAR_END+1):
     
 
 if PLOT:
-    x1=aa.wndspd.extract(iris.Constraint(time=aa.wndspd.coord('time').points[0]))
-    qplt.contourf(x1)
+    x1=aa.psi
+    x2=x1.extract(iris.Constraint(time=x1.coord('time').points[0]))
+    qplt.contourf(x2)
     plt.gca().coastlines()
     
     plt.show()

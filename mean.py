@@ -13,7 +13,7 @@ descriptor['level']=LEVEL
 descriptor['source']=SOURCE
 descriptor['tdomainid']=TDOMAINID
 descriptor['basedir']='/gpfs/afm/matthews/data/'
-descriptor['filein1']=descriptor['basedir']+descriptor['source']+'/raw_std/'+descriptor['var_name']+'_'+str(descriptor['level'])+'_*.nc'
+descriptor['filein1']=descriptor['basedir']+descriptor['source']+'/std/'+descriptor['var_name']+'_'+str(descriptor['level'])+'_*.nc'
 descriptor['fileout1']=descriptor['basedir']+descriptor['source']+'/processed/'+descriptor['var_name']+'_'+str(descriptor['level'])+'_'+descriptor['tdomainid']+'.nc'
 
 aa=da.TimeDomStats(descriptor,verbose=VERBOSE)

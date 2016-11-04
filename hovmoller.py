@@ -1,15 +1,15 @@
 import data_analysis as da
-import iris
 import iris.quickplot as qplt
 import matplotlib.pyplot as plt
 import datetime
 
 BASEDIR='/gpfs/afm/matthews/data/'
 
-VAR_NAME='sst'; LEVEL=1; SOURCE='sstrey_sfc_d'
+VAR_NAME='wndspd'; LEVEL=1; SOURCE='ncepncar_sfc_d'
+#VAR_NAME='sst'; LEVEL=1; SOURCE='sstrey_sfc_d'
 #VAR_NAME='olr'; LEVEL=0; SOURCE='olrinterp_toa_d'
 
-FILEPRE='' # e.g., '', '_rac', '_rac_f20_200'
+FILEPRE='_rac' # e.g., '', '_rac', '_rac_f20_200'
 
 BAND_NAME='longitude' # Dimension to average over: 'latitude' or 'longitude'
 BAND_VAL1=80
@@ -18,7 +18,7 @@ BAND_VAL2=95
 CREATE=True
 YEAR_BEG=2016; YEAR_END=2016
 
-PLOT=False
+PLOT=True
 
 VERBOSE=2
 
@@ -29,12 +29,11 @@ descriptor['basedir']=BASEDIR
 descriptor['var_name']=VAR_NAME
 descriptor['level']=LEVEL
 descriptor['source']=SOURCE
-descriptor['basedir']='/gpfs/afm/matthews/data/'
-descriptor['file_data_in']=BASEDIR+SOURCE+'/raw_std/'+VAR_NAME+'_'+\
-          str(LEVEL)+FILEPRE+'_*.nc'
+descriptor['file_data_in']=BASEDIR+SOURCE+'/std/'+VAR_NAME+'_'+\
+          str(LEVEL)+FILEPRE+'_????.nc'
 strhov='_hov_'+BAND_NAME[:3]+'_'+str(BAND_VAL1)+'_'+str(BAND_VAL2)
 descriptor['file_data_hov']=BASEDIR+SOURCE+'/processed/'+VAR_NAME+'_'+\
-          str(LEVEL)+FILEPRE+strhov+'_*.nc'
+          str(LEVEL)+FILEPRE+strhov+'_????.nc'
 descriptor['band_name']=BAND_NAME
 descriptor['band_val1']=BAND_VAL1
 descriptor['band_val2']=BAND_VAL2
@@ -51,9 +50,10 @@ if CREATE:
         aa.f_hovmoller()
 else:
     aa.f_read_hovmoller()
+    aa.data_hov_current=aa.data_hov[-1]
 
 if PLOT:
-    x1=aa.data_hov[-1]
+    x1=aa.data_hov_current
     qplt.contourf(x1)
     
     plt.show()

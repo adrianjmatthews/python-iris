@@ -10,7 +10,7 @@ VAR_NAME='sst'; LEVEL=1;
 SOURCE1='sstrey_sfc_w'
 SOURCE2='sstrey_sfc_d'
 
-YEAR_BEG=1990; YEAR_END=2016
+YEAR_BEG=1981; YEAR_END=2016
 
 PLOT=False
 
@@ -26,11 +26,11 @@ descriptor['source1']=SOURCE1
 descriptor['source2']=SOURCE2
 descriptor['basedir']='/gpfs/afm/matthews/data/'
 descriptor['file_data_in']=descriptor['basedir']+descriptor['source1']+\
-          '/raw_std/'+descriptor['var_name']+'_'+str(descriptor['level'])+\
-          '_*.nc'
+          '/std/'+descriptor['var_name']+'_'+str(descriptor['level'])+\
+          '_????.nc'
 descriptor['file_data_out']=descriptor['basedir']+descriptor['source2']+\
-          '/raw_std/'+descriptor['var_name']+'_'+str(descriptor['level'])+\
-          '_*.nc'
+          '/std/'+descriptor['var_name']+'_'+str(descriptor['level'])+\
+          '_????.nc'
 
 
 # Create instance of Interpolate object
@@ -40,8 +40,8 @@ for year in range(YEAR_BEG,YEAR_END+1):
     print('### year={0!s}'.format(year))
     aa.year=year
     if aa.frequency=='d':
-        aa.time1_out=datetime.datetime(aa.year,1,1)
-        aa.time2_out=datetime.datetime(aa.year,12,31)
+        aa.time1_out=datetime.datetime(aa.year,1,1,0,0)
+        aa.time2_out=datetime.datetime(aa.year,12,31,23,59)
     else:
         raise UserWarning('Need code for interpolating to other than daily data.')
     aa.f_interpolate_time()

@@ -43,8 +43,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from windspharm.iris import VectorWind
 
-hello='world'
-
 h1a='<<<=============================================================\n'
 h1b='=============================================================>>>\n'
 h2a='<<<---------------------------\n'
@@ -74,21 +72,6 @@ var_name2standard_name={
     'lhfd':'surface_downward_latent_heat_flux',
     }
 
-# source_information is a dictionary of dictionaries with information on data
-# sources.
-
-source_information={
-    'ncepdoe_plev_d':{'description':'NCEP-DOE reanalysis',
-               'url':'www.cdc.noaa.gov',
-               'reference':'kanamitsuetal2002'},
-    'olrcdr_toa_d':{'description':'NOAA OLR daily climate data record',
-              'url':'www.cdc.noaa.gov',
-              'reference':'lee2014'},
-    'sstrey_sfc_w':{'description':'Reynolds SST',
-               'url':'www.cdc.noaa.gov',
-               'reference':'reynoldsetal2002'},
-    }
-
 #==========================================================================
 
 def source_info(self):
@@ -105,7 +88,7 @@ def source_info(self):
     if self.data_source not in valid_data_sources:
         raise UserWarning('data_source {0.data_source!s} not vaild'.format(self))
     # Set outfile_frequency attribute depending on source information
-    if self.source in ['ncepdoe_plev_d','ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
+    if self.source in ['ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
         self.outfile_frequency='year'
     else:
         raise UserWarning('Need to specify outfile_frequency for this data source.')
@@ -491,7 +474,7 @@ class DataConverter(object):
     '<data_source>_<level_type>_<frequency>'.  In practice, the source
     attribute is used to set the directory in which the netcdf files
     are stored:
-       <self.basedir>/<self.source>/raw_input/ for original data in the
+       <self.basedir>/<self.source>/raw/ for original data in the
           original format downloaded from data source web site.  Netcdf
           files in this directory are the input to DataConverter
        <self.basedir>/<self.source>/std/ for the converted, standardised
@@ -557,7 +540,7 @@ class DataConverter(object):
         self.file_mask=False # Default value, overwrite if exists
         self.mask=False # Ditto
         if descriptor['file_mask']:
-            self.file_mask=os.path.join(self.basedir,self.source,'raw_input',descriptor['file_mask'])
+            self.file_mask=os.path.join(self.basedir,self.source,'raw',descriptor['file_mask'])
             with iris.FUTURE.context(netcdf_promote=True):
                 x1=iris.load(self.file_mask,callback=clean_callback)
             x2=x1.concatenate_cube()
@@ -602,26 +585,26 @@ class DataConverter(object):
         else:
             raise UserWarning("Need to write code for outfile_frequency other than 'year'.")
         # Set input file name(s)
-        if self.source in ['ncepdoe_plev_d',]:
-            self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.'+str(self.year)+'.nc')
+        if self.source in ['ncepdoe_plev_d','ncepncar_plev_d']:
+            self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.'+str(self.year)+'.nc')
         elif self.source in ['ncepncar_sfc_d',]:
-            self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.sig995.'+str(self.year)+'.nc')
+            self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.sig995.'+str(self.year)+'.nc')
         elif self.source in ['olrcdr_toa_d','olrinterp_toa_d']:
-            self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.day.mean.nc')
+            self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.day.mean.nc')
         elif self.source in ['sstrey_sfc_w',]:
             if 1981<=self.year<=1989:
-                self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.wkmean.1981-1989.nc')
+                self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.wkmean.1981-1989.nc')
             elif 1990<=self.year:
-                self.filein1=os.path.join(self.basedir,self.source,'raw_input',self.var_name+'.wkmean.1990-present.nc')
+                self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.wkmean.1990-present.nc')
             else:
                 raise UserWarning('Invalid year')
         elif self.source in ['tropflux_sfc_d']:
             if self.var_name=='lhfd':
-                self.filein1=os.path.join(self.basedir,self.source,'raw_input','lhf_tropflux_1d_'+str(self.year)+'.nc')
+                self.filein1=os.path.join(self.basedir,self.source,'raw','lhf_tropflux_1d_'+str(self.year)+'.nc')
         else:
             raise UserWarning('Data source not recognised')
         # Set level constraint (set to False if none)
-        if self.data_source in ['ncepdoe',] and self.level_type=='plev':
+        if self.data_source in ['ncepdoe','ncepncar'] and self.level_type=='plev':
             level_constraint=iris.Constraint(Level=self.level)
         elif self.source in ['ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','tropflux_sfc_d']:
             level_constraint=False
@@ -673,6 +656,7 @@ class DataConverter(object):
         # Universal format changes
         self.cube.var_name=self.var_name
         self.cube.standard_name=self.name
+        self.cube.coord('time').bounds=None
         #
         # Reynolds SST weekly data.
         # Time stamp is at beginning of week.
@@ -747,7 +731,7 @@ class DataConverter(object):
         """Write cube to netcdf file."""
         # Set output file name
         if self.outfile_frequency=='year':
-            self.fileout1=os.path.join(self.basedir,self.source,'raw_std/',self.var_name+'_'+str(self.level)+'_'+str(self.year)+'.nc')
+            self.fileout1=os.path.join(self.basedir,self.source,'std/',self.var_name+'_'+str(self.level)+'_'+str(self.year)+'.nc')
         else:
             raise UserWarning("Need to write code for outfile_frequency other than 'year'.")
         # Write cube
@@ -813,7 +797,8 @@ class TimeDomStats(object):
         if self.tdomain.type!='event':
             raise UserWarning("Warning: time domain type is '{0.tdomain.type}'.  It must be 'event'.".format(self))
         # Load list of cubes
-        x1=iris.load(self.filein1,self.name)
+        with iris.FUTURE.context(netcdf_promote=True):
+            x1=iris.load(self.filein1,self.name)
         # Loop over events in time domain
         cube_event_means=[]
         cube_event_ntimes=[]
@@ -912,25 +897,20 @@ class TimeFilter(object):
         self.filter=descriptor['filter']
         self.file_weights=descriptor['file_weights']
         self.f_weights()
-        self.timeout1=descriptor['times'][0]
-        self.timeout2=descriptor['times'][1]
         self.filein1=descriptor['filein1']
-        self.fileout1=descriptor['fileout1']
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_in=iris.load(self.filein1,self.name)
         self.source=descriptor['source']
-        # Calculate start and end time of input data
-        # Time interval of data is encoded in source e.g., ncep_plev_d
         xx=self.source.split('_')
         self.frequency=xx[2]
         if self.frequency=='d':
-            timedelta=datetime.timedelta(days=self.nn)
+            self.timedelta=datetime.timedelta(days=self.nn)
         elif self.frequency=='h':
-            timedelta=datetime.timedelta(hours=self.nn)
+            self.timedelta=datetime.timedelta(hours=self.nn)
         else:
             raise UserWarning('data time interval is not days or hours - need more code!')
-        self.timein1=self.timeout1-timedelta
-        self.timein2=self.timeout2+timedelta
         if self.verbose:
             print(self)        
 
@@ -945,12 +925,8 @@ class TimeFilter(object):
                 'nweights: {0.nweights!s} \n'+\
                 'weights: {0.weights!s} \n'+\
                 'filein1: {0.filein1!s} \n'+\
-                'fileout1: {0.fileout1!s} \n'+\
                 'frequency: {0.frequency!s} \n'+\
-                'timein1: {0.timein1!s} \n'+\
-                'timeout1: {0.timeout1!s} \n'+\
-                'timeout2: {0.timeout2!s} \n'+\
-                'timein2: {0.timein2!s} \n'+h1b
+                'data_in: {0.data_in!s} \n'+h1b
             return(ss.format(self))
         else:
             return 'TimeFilter instance'
@@ -989,15 +965,33 @@ class TimeFilter(object):
     def time_filter(self):
         """Filter using the rolling_window cube method and save data."""
 
-        # Read in input data
-        x1=iris.load(self.filein1,self.name)
+        # Calculate start and end time of input data
+        self.timein1=self.timeout1-self.timedelta
+        self.timein2=self.timeout2+self.timedelta
+        # Set output file name
+        self.fileout1=self.filein1.replace('????',self.filter+'_'+str(self.year))
+        if self.verbose==2:
+            ss=h2a+'timein1: {0.timein1!s} \n'+\
+                'timeout1: {0.timeout1!s} \n'+\
+                'timeout2: {0.timeout2!s} \n'+\
+                'timein2: {0.timein2!s} \n'+\
+                'fileout1: {0.fileout1!s} \n'+h2b
+            print(ss.format(self))
+        # Extract input data
         time_constraint=iris.Constraint(time=lambda cell: self.timein1 <=cell<= self.timein2)
         with iris.FUTURE.context(cell_datetime_objects=True):
-            x2=x1.extract(time_constraint)
-        self.data_in=x2.concatenate_cube()
+            x2=self.data_in.extract(time_constraint)
+        self.data_current=x2.concatenate_cube()
         # Apply filter
-        self.data_out=self.data_in.rolling_window('time',
-              iris.analysis.MEAN,self.nweights,weights=self.weights)
+        x3=self.data_current.rolling_window('time',iris.analysis.MEAN,
+                self.nweights,weights=self.weights)
+        #pdb.set_trace()
+        # Create a cube from this numpy array
+        x4=create_cube(conv_float32(x3.data),x3)
+        # Add a cell method to describe the time filter
+        cm=iris.coords.CellMethod('mean','time',comments='time filter: '+self.filter)
+        x4.add_cell_method(cm)
+        self.data_out=x4
         # Save data
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.data_out,self.fileout1)
@@ -1020,7 +1014,8 @@ class Interpolate(object):
         self.source2=descriptor['source2']
         self.source=self.source2
         source_info(self)
-        self.data_in=iris.load(self.file_data_in,self.name)
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_in=iris.load(self.file_data_in,self.name)
         # Get first time in input data
         x1=self.data_in[0].coord('time')[0]
         x2=x1.cell(0)[0]
@@ -1098,7 +1093,7 @@ class Interpolate(object):
             cm=iris.coords.CellMethod('point','time',comments='linearly interpolated from weekly to daily time dimension')
             self.cube_out.add_cell_method(cm)
             # Save interpolated data
-            fileout=self.file_data_out.replace('*',str(self.year))
+            fileout=self.file_data_out.replace('????',str(self.year))
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.cube_out,fileout)
@@ -1191,7 +1186,7 @@ class Hovmoller(object):
         x3.add_cell_method(cm)
         self.data_hov_current=x3
         # Save Hovmoller data
-        fileout=self.file_data_hov.replace('*',str(self.year))
+        fileout=self.file_data_hov.replace('????',str(self.year))
         print('fileout: {0!s}'.format(fileout))
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.data_hov_current,fileout)
@@ -1201,7 +1196,8 @@ class Hovmoller(object):
 
         Create data_hov attribute.
         """
-        self.data_hov=iris.load(self.file_data_hov,self.name)
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_hov=iris.load(self.file_data_hov,self.name)
 
 #==========================================================================
 
@@ -1324,8 +1320,8 @@ class Wind(object):
             self.psi,self.chi=self.ww.sfvp()
             self.psi.var_name=self.var_name_psi
             self.chi.var_name=self.var_name_chi
-            fileout1=self.file_data_psi.replace('*',str(self.year))
-            fileout2=self.file_data_chi.replace('*',str(self.year))
+            fileout1=self.file_data_psi.replace('????',str(self.year))
+            fileout2=self.file_data_chi.replace('????',str(self.year))
             print('fileout1: {0!s}'.format(fileout1))
             print('fileout2: {0!s}'.format(fileout2))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
@@ -1335,7 +1331,7 @@ class Wind(object):
         elif self.flag_psi:
             self.psi=self.ww.streamfunction()
             self.psi.var_name=self.var_name_psi
-            fileout=self.file_data_psi.replace('*',str(self.year))
+            fileout=self.file_data_psi.replace('????',str(self.year))
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.psi,fileout)
@@ -1343,7 +1339,7 @@ class Wind(object):
         elif self.flag_chi:
             self.chi=self.ww.velocitypotential()
             self.chi.var_name=self.var_name_chi
-            fileout=self.file_data_chi.replace('*',str(self.year))
+            fileout=self.file_data_chi.replace('????',str(self.year))
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.chi,fileout)
@@ -1352,8 +1348,8 @@ class Wind(object):
             self.vrt,self.div=self.ww.vrtdiv()
             self.vrt.var_name=self.var_name_vrt
             self.div.var_name=self.var_name_div
-            fileout1=self.file_data_vrt.replace('*',str(self.year))
-            fileout2=self.file_data_div.replace('*',str(self.year))
+            fileout1=self.file_data_vrt.replace('????',str(self.year))
+            fileout2=self.file_data_div.replace('????',str(self.year))
             print('fileout1: {0!s}'.format(fileout1))
             print('fileout2: {0!s}'.format(fileout2))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
@@ -1363,7 +1359,7 @@ class Wind(object):
         elif self.flag_vrt:
             self.vrt=self.ww.vorticity()
             self.vrt.var_name=self.var_name_vrt
-            fileout=self.file_data_vrt.replace('*',str(self.year))
+            fileout=self.file_data_vrt.replace('????',str(self.year))
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.vrt,fileout)
@@ -1371,7 +1367,7 @@ class Wind(object):
         elif self.flag_div:
             self.div=self.ww.divergence()
             self.div.var_name=self.var_name_div
-            fileout=self.file_data_div.replace('*',str(self.year))
+            fileout=self.file_data_div.replace('????',str(self.year))
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.div,fileout)
@@ -1379,7 +1375,7 @@ class Wind(object):
         if self.flag_wndspd:
             self.wndspd=self.ww.magnitude()
             self.wndspd.var_name=self.var_name_wndspd
-            fileout=self.file_data_wndspd.replace('*',str(self.year))
+            fileout=self.file_data_wndspd.replace('????',str(self.year))
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.wndspd,fileout)
@@ -1418,7 +1414,7 @@ class AnnualCycle(object):
     cycle subtracted.
     
     self.file_data_in : path name for file(s) of input data.  Contains a
-    wild card * character, which will be replaced by, e.g., year
+    wild card ???? character, which will be replaced by, e.g., year
     numbers (if self.outfile_frequency is 'year').
     
     self.file_anncycle_raw : path name for file of raw annual cycle.
@@ -1427,7 +1423,7 @@ class AnnualCycle(object):
     cycle.
     
     self.file_anncycle_rm : path name for file(s) of data with
-    smoothed annual cycle subtracted.  Contains a wild card *
+    smoothed annual cycle subtracted.  Contains a wild card ????
     character, which will be replaced by, e.g., year numbers (if
     self.outfile_frequency is 'year').
     """
@@ -1447,7 +1443,8 @@ class AnnualCycle(object):
         self.year1=descriptor['year1']
         self.year2=descriptor['year2']
         self.nharm=descriptor['nharm']
-        self.data_in=iris.load(self.file_data_in,self.name)
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_in=iris.load(self.file_data_in,self.name)
         # Get first time in input data
         x1=self.data_in[0].coord('time')[0]
         x2=x1.cell(0)[0]
@@ -1649,7 +1646,8 @@ class AnnualCycle(object):
 
         Create data_anncycle_raw attribute.
         """
-        self.data_anncycle_raw=iris.load_cube(self.file_anncycle_raw,self.name)
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_anncycle_raw=iris.load_cube(self.file_anncycle_raw,self.name)
 
     def f_anncycle_smooth(self):
         """Calculate smoothed annual cycle.
@@ -1810,8 +1808,9 @@ class AnnualCycle(object):
         Create data_anncycle_smooth and data_anncycle_smooth_leap
         attributes.
         """
-        self.data_anncycle_smooth=iris.load_cube(self.file_anncycle_smooth,self.name)
-        self.data_anncycle_smooth_leap=iris.load_cube(self.file_anncycle_smooth_leap,self.name)
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_anncycle_smooth=iris.load_cube(self.file_anncycle_smooth,self.name)
+            self.data_anncycle_smooth_leap=iris.load_cube(self.file_anncycle_smooth_leap,self.name)
 
     def f_subtract_anncycle(self):
         """Subtract smoothed annual cycle from input data to create anomaly data.
@@ -1888,14 +1887,15 @@ class AnnualCycle(object):
                 cm=iris.coords.CellMethod('point','time',comments='anomaly: subtracted smoothed annual cycle: '+str(self.year1)+'-'+str(self.year2)+': mean + '+str(self.nharm)+' harmonics')
                 data_anom.add_cell_method(cm)
                 # Save anomaly data (anncycle subtracted)
-                fileout=self.file_anncycle_rm.replace('*',str(yearc))
+                fileout=self.file_anncycle_rm.replace('????',str(yearc))
                 print('fileout: {0!s}'.format(fileout))
                 with iris.FUTURE.context(netcdf_no_unlimited=True):
                     iris.save(data_anom,fileout)
                 # Increment current year
                 yearc+=1
             # Set data_anncycle_rm attribute
-            self.data_anncycle_rm=iris.load(self.file_anncycle_rm,self.name)
+            with iris.FUTURE.context(netcdf_promote=True):
+                self.data_anncycle_rm=iris.load(self.file_anncycle_rm,self.name)
         else:
             raise UserWarning('Need code for other outfile_frequency values.')
 
@@ -1904,5 +1904,6 @@ class AnnualCycle(object):
 
         Create data_anncycle_rm attribute.
         """
-        self.data_anncycle_rm=iris.load(self.file_anncycle_rm,self.name)
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_anncycle_rm=iris.load(self.file_anncycle_rm,self.name)
         
