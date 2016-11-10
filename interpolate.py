@@ -1,3 +1,5 @@
+"""Interpolate data to higher time resolution using data_analysis.Interpolate."""
+
 import data_analysis as da
 import iris
 import iris.quickplot as qplt
@@ -6,9 +8,7 @@ import datetime
 
 BASEDIR='/gpfs/afm/matthews/data/'
 
-VAR_NAME='sst'; LEVEL=1;
-SOURCE1='sstrey_sfc_w'
-SOURCE2='sstrey_sfc_d'
+VAR_NAME='sst'; LEVEL=1; SOURCE1='sstrey_sfc_w'; SOURCE2='sstrey_sfc_d'
 
 YEAR_BEG=1981; YEAR_END=2016
 

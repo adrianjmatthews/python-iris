@@ -1,3 +1,5 @@
+"""Calculate time mean statistics using data_analysis.TimeDomStats."""
+
 import data_analysis as da
 import iris
 import iris.quickplot as qplt

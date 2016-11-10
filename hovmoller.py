@@ -1,3 +1,5 @@
+"""Create a Hovmoller field using data_analysis.Hovmoller."""
+
 import data_analysis as da
 import iris.quickplot as qplt
 import matplotlib.pyplot as plt

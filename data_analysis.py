@@ -1,20 +1,21 @@
-"""It's object oriented all the way down.
+"""Data analysis using iris.
 
-May 2016.  Moving from cdat to iris, and procedural to object oriented
-programming.
+Classes that provide iris data i/o wrappers to data analysis methods,
+often also using the iris module, for analysis of meteorological and
+oceanographic gridded data.
 
-data_analysis will ultimately replace much of ajm_functions.
+Author: Adrian Matthews
+
+Create documentation with pydoc -w data_analysis
 
 Programming style:
 
-#-----------------------------------------------
+Object oriented!
 
 Class methods typically set an attribute(s) of the class instance.
 They typically do not return an argument.
 
-#-----------------------------------------------
-
-Printed output and information
+Printed output and information:
 
 The __init__ method of each class has a 'verbose' keyword argument.
 
@@ -25,8 +26,6 @@ particular class attribute has been created)
 
 verbose=2 prints extended output (typically the value of that class
 attribute).
-
-#-----------------------------------------------
 
 """
 
@@ -43,6 +42,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from windspharm.iris import VectorWind
 
+# Header for use in calls to print
 h1a='<<<=============================================================\n'
 h1b='=============================================================>>>\n'
 h2a='<<<---------------------------\n'
@@ -70,12 +70,21 @@ var_name2standard_name={
     'olr':'toa_outgoing_longwave_flux',
     'sst':'sea_surface_temperature',
     'lhfd':'surface_downward_latent_heat_flux',
+    'ppt':'lwe_precipitation_rate',
     }
 
 #==========================================================================
 
 def source_info(self):
-    """Create attributes based on the source attribute."""
+    """Create attributes based on the source attribute.
+
+    Attributes created are:
+
+    data_source:  e.g., 'ncepdoe', 'olrinterp'
+    level_type:  e.g., 'plev' for pressure level, 'toa' for top of atmosphere
+    frequency: e.g., 'd' for daily, '3' for 3-hourly
+    
+    """
     # Split source attribute string using underscores as separators
     xx=self.source.split('_')
     if len(xx)!=3:
@@ -84,12 +93,14 @@ def source_info(self):
     self.level_type=xx[1]
     self.frequency=xx[2]
     # Check data_source attribute is valid
-    valid_data_sources=['ncepdoe','ncepncar','olrcdr','olrinterp','sstrey','tropflux']
+    valid_data_sources=['ncepdoe','ncepncar','olrcdr','olrinterp','sstrey','trmm3b42v7','tropflux']
     if self.data_source not in valid_data_sources:
         raise UserWarning('data_source {0.data_source!s} not vaild'.format(self))
     # Set outfile_frequency attribute depending on source information
     if self.source in ['ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
         self.outfile_frequency='year'
+    elif self.source in ['trmm3b42v7_sfc_3','trmm3b42v7_sfc_d']:
+        self.outfile_frequency='month'
     else:
         raise UserWarning('Need to specify outfile_frequency for this data source.')
     # Printed output
@@ -164,6 +175,7 @@ def create_cube(array,oldcube):
     """Create an iris cube from a numpy array and attributes from an old cube.
 
     Return newcube.
+    
     """
     # Check that array and oldcube have same dimensions
     if array.shape!=oldcube.shape:
@@ -205,6 +217,50 @@ def conv_float32(old_array):
 
     new_array=old_array.astype(type('float32',(np.float32,),{}))
     return new_array
+
+#==========================================================================
+
+def block_times(self,verbose=False):
+    """Set start and end times for current block.
+
+    Input <self> is an object with the following attributes:
+
+    outfile_frequency:  e.g., 'year' or 'month'
+    year: integer for current year, e.g., 2016
+    month: integer for current month, in range 1 to 12.
+
+    Returns time,time2 which are datetime.datetime objects for the
+    start and end times for the current block.  These are then
+    typically used to create an iris constraint on time for extracting
+    data.
+
+    If outfile_frequency is 'year', start and end times are 00 UTC on
+    1 Jan of current year, and 1 second before 00 UTC on 1 Jan the
+    following year.
+
+    If outfile_frequency is 'month', start and end times are 00 UTC on
+    1st of current month and year, and 1 second before 00 UTC on 1st
+    of the following month.
+
+    """
+    
+    timedelta_second=datetime.timedelta(seconds=1)
+    if self.outfile_frequency=='year':
+        time1=datetime.datetime(self.year,1,1)
+        time2=datetime.datetime(self.year+1,1,1)-timedelta_second
+    elif self.outfile_frequency=='month':
+        time1=datetime.datetime(self.year,self.month,1)
+        if self.month!=12:
+            time2=datetime.datetime(self.year,self.month+1,1)-timedelta_second
+        else:
+            time2=datetime.datetime(self.year+1,1,1)-timedelta_second
+    else:
+        raise UserWarning("Need to write code for other outfile_frequency.")
+    if verbose:
+        ss=h2a+'time1: {0!s} \n'+\
+            'time2: {1!s} \n'+h2b
+        print(ss.format(time1,time2))
+    return time1,time2
 
 #==========================================================================
 
@@ -362,7 +418,8 @@ class TimeDomain(object):
             print(ss.format(self))
 
     def ascii2partial_date_time(self):
-        """Convert ascii representation of timedomain to PartialDateTime representation.
+        """Convert ascii representation of timedomain to PartialDateTime.
+        
         Create a partial_date_times attribute.
 
         """
@@ -390,7 +447,7 @@ class TimeDomain(object):
             print(ss.format(self))
         
     def datetime2ascii(self):
-        """Convert datetime representation of timedomain to ascii representation.
+        """Convert datetime representation of timedomain to ascii.
         Create a lines attribute.
         """
         # Convert datetime objects to ascii strings
@@ -445,21 +502,12 @@ class TimeDomain(object):
 class DataConverter(object):
     """Converter to iris-friendly standard format netcdf files.
 
+    Called from preprocess.py.
+
     Using iris, read in data from different sources.  Convert to
     standard cube format and file format.  Write to new netcdf file.
 
     Code is flexible to allow for new input data sources.
-
-    Time: Several options for output file(s):
-       If individual files are larger ~1GB, file access significantly slowed
-       Try to keep individual files significantly smaller than this.
-       All data output in single file (e.g., from 1979-2016).  Try not to use.
-       Data output in separate files for each year, e.g., 1979, 1980, etc.
-       Data output in separate files for each month, e.g., Jan 1979, etc.
-       ncepdoe 144x73 grid, daily, = 15 MB per year, ok
-       olrcdr 360x180 grid, daily, = 95 MB per year, ok
-       era-interim 512x256 grid, 6 hourly = 765 MB per year, ok
-       trmm 1440x~400 grid, 3 hourly = 550 MB per month, ok
 
     Attributes:
 
@@ -493,8 +541,8 @@ class DataConverter(object):
 
     self.frequency : string denoting time frequency of data.  This is
     used in file names.  It is determined by self.source.  One of:
-       '3h' 3-hourly
-       '6h' 6-hourly
+       '3' 3-hourly
+       '6' 6-hourly
        'd' daily
        'p' pentad (5-day)
        'w' weekly (7-day)
@@ -525,10 +573,17 @@ class DataConverter(object):
     attribute of DataConverter. The purpose of DataConverter is to
     convert self.cube to standard form and write it as a netcdf file.
 
+    self.file_mask and self.mask.  Default values are False.  If the
+    data is to be masked (e.g., SST data to be masked with a land-sea
+    mask), then file_mask is the path name for the mask, and mask is
+    the array with the mask.
+
     """
     
     def __init__(self,descriptor,verbose=True):
-        """Initialise from descriptor dictionary."""
+        """Initialise from descriptor dictionary.
+
+        """
         self.descriptor=descriptor
         self.verbose=verbose
         self.source=descriptor['source']
@@ -578,12 +633,8 @@ class DataConverter(object):
         data sources with different input formats.
         """
         # Set time constraint for current time block
-        if self.outfile_frequency=='year':
-            time1=datetime.datetime(year=self.year,month=1,day=1,hour=0,minute=0,second=0,microsecond=0)
-            time2=datetime.datetime(year=self.year,month=12,day=31,hour=23,minute=59,second=59,microsecond=999999)
-            time_constraint=iris.Constraint(time = lambda cell: time1 <= cell <= time2)
-        else:
-            raise UserWarning("Need to write code for outfile_frequency other than 'year'.")
+        time1,time2=block_times(self,verbose=self.verbose)
+        time_constraint=iris.Constraint(time = lambda cell: time1 <= cell <= time2)
         # Set input file name(s)
         if self.source in ['ncepdoe_plev_d','ncepncar_plev_d']:
             self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.'+str(self.year)+'.nc')
@@ -598,6 +649,8 @@ class DataConverter(object):
                 self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.wkmean.1990-present.nc')
             else:
                 raise UserWarning('Invalid year')
+        elif self.source in ['trmm3b42v7_sfc_3']:
+            self.filein1=os.path.join(self.basedir,self.source,'raw',str(self.year)+str(self.month).zfill(2),'3B42.'+str(self.year)+str(self.month).zfill(2)+'*.7.nc')
         elif self.source in ['tropflux_sfc_d']:
             if self.var_name=='lhfd':
                 self.filein1=os.path.join(self.basedir,self.source,'raw','lhf_tropflux_1d_'+str(self.year)+'.nc')
@@ -606,7 +659,7 @@ class DataConverter(object):
         # Set level constraint (set to False if none)
         if self.data_source in ['ncepdoe','ncepncar'] and self.level_type=='plev':
             level_constraint=iris.Constraint(Level=self.level)
-        elif self.source in ['ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','tropflux_sfc_d']:
+        elif self.source in ['ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','trmm3b42v7_sfc_3','tropflux_sfc_d']:
             level_constraint=False
         else:
             raise UserWarning('Set an instruction for level_constraint.')
@@ -651,7 +704,12 @@ class DataConverter(object):
             print(ss.format(time1,time2))
         
     def format_cube(self):
-        """Change cube to standard format."""
+        """Change cube to standard format.
+
+        There a few standard format changes applied to all data sets,
+        followed by changes specific to particular data sets.
+        
+        """
         #
         # Universal format changes
         self.cube.var_name=self.var_name
@@ -728,12 +786,16 @@ class DataConverter(object):
             self.cube=x5
 
     def write_cube(self):
-        """Write cube to netcdf file."""
+        """Write standardised iris cube to netcdf file.
+
+        """
         # Set output file name
         if self.outfile_frequency=='year':
             self.fileout1=os.path.join(self.basedir,self.source,'std/',self.var_name+'_'+str(self.level)+'_'+str(self.year)+'.nc')
+        elif self.outfile_frequency=='month':
+            self.fileout1=os.path.join(self.basedir,self.source,'std/',self.var_name+'_'+str(self.level)+'_'+str(self.year)+str(self.month).zfill(2)+'.nc')
         else:
-            raise UserWarning("Need to write code for outfile_frequency other than 'year'.")
+            raise UserWarning("Need to write code for this outfile_frequency.")
         # Write cube
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.cube,self.fileout1)
@@ -745,10 +807,39 @@ class DataConverter(object):
 class TimeDomStats(object):
     """Time mean and other statistics of data over non-contiguous time domain.
 
+    Called from several scripts, including mean.py.
+
+    All statistics calculations will be done by this class, so add
+    further functions as needed.
+
+    Selected attributes:
+
+    self.tdomainid : string id of the time domain.
+
+    self.tdomain : instance of TimeDomain class for the time domain.
+
+    self.filein1 : path name for input files for data to calculate
+    statistics from.  Will likely contain wild card characters.
+
+    self.fileout1 : path name for output file of calculated statistic.
+    
+    self.cube_event_means : iris cube list of individual event means,
+    i.e., the time mean over each pair of (start,end) times in the
+    time domain.
+
+    self.cube_event_ntimes : list of integers with number of times
+    that went into each even mean, e.g., list of numbers of days in
+    each event is data is daily.
+
+    self.time_mean : iris cube of time mean calculated over the whole
+    time domain.
+
     """
 
     def __init__(self,descriptor,verbose=False):
-        """Initialise from descriptor dictionary."""
+        """Initialise from descriptor dictionary.
+
+        """
         self.ntimemin=5
         self.__dict__.update(descriptor)
         self.descriptor=descriptor
@@ -848,7 +939,9 @@ class TimeDomStats(object):
 #==========================================================================
 
 class TimeFilter(object):
-    """Time filter.
+    """Time filter using rolling_window method of iris cube.
+
+    Called from filter.py.
 
     Assumes input data has equally spaced time intervals
 
@@ -991,6 +1084,8 @@ class TimeFilter(object):
         # Add a cell method to describe the time filter
         cm=iris.coords.CellMethod('mean','time',comments='time filter: '+self.filter)
         x4.add_cell_method(cm)
+        # Set time bounds to None type
+        x4.coord('time').bounds=None
         self.data_out=x4
         # Save data
         with iris.FUTURE.context(netcdf_no_unlimited=True):
@@ -998,8 +1093,161 @@ class TimeFilter(object):
 
 #==========================================================================
 
+class TimeAverage(object):
+    """Time average data e.g., convert from 3-hourly to daily mean.
+
+    Called from time_average.py.
+
+    Used to change (reduce) time resolution of data, for subsequent
+    data analysis.  Because the source attribute of a data set
+    contains information on the time resolution, this effectively
+    creates data with a different source.
+
+    N.B. To calculate time mean statistics over a particular time
+    domain, use the TimeDomStats class instead.
+
+    N.B.  To "increase" time resolution of data, e.g., from weekly to
+    daily, use the TimeInterpolate class instead.
+
+    Selected attributes:
+
+    self.source1 : input source, e.g., trmm3b42v7_sfc_3 3-hourly data.
+
+    self.source2 : output source, e.g., trmm3b42v7_sfc_d daily data.
+    The data_source and level_type parts of self.source1 and
+    self.source 2 should be identical.
+
+    self.frequency : the frequency part of self.source2, indicating
+    what time resolution the input data is to be converted to, e.g.,
+    'd' for daily.
+
+    self.year and self.month : year (and month, depending on value of
+    self.outfile_frequency) of input data block.
+
+    self.filein1 : path name for input files from self.source1.
+    Probably contains wild card characters.
+
+    self.data_in : iris cube list of all input data
+
+    self.cube_in : input cube of data from self.source1 for the
+    current time block.
+
+    self.cube_out : output cube of data for current time block to be
+    saved under self.source2.
+
+    self.fileout1 : path name for output file under self.source2.
+
+    """
+
+    def __init__(self,descriptor,verbose=False):
+        self.descriptor=descriptor
+        self.verbose=verbose
+        self.basedir=descriptor['basedir']
+        self.var_name=descriptor['var_name']
+        self.name=var_name2standard_name[self.var_name]
+        self.level=descriptor['level']
+        self.source1=descriptor['source1']
+        self.source2=descriptor['source2']
+        self.source=self.source2
+        source_info(self)
+        if self.outfile_frequency=='year':
+            x1='????'
+        elif self.outfile_frequency=='month':
+            x1='??????'
+        else:
+            raise UserWarning('outfile_frequency not recognised')
+        self.filein1=os.path.join(self.basedir,self.source1,'std',self.var_name+'_'+str(self.level)+'_'+x1+'.nc')
+        self.data_in=iris.load(self.filein1,self.name)
+        if self.verbose:
+            print(self)        
+
+    def __repr__(self):
+        return 'TimeAverage({0.descriptor!r},verbose={0.verbose!r})'.format(self)
+
+    def __str__(self):
+        if self.verbose==2:
+            ss=h1a+'TimeAverage instance \n'+\
+                'data_in: {0.data_in!s} \n'+\
+                'source1: {0.source1!s} \n'+\
+                'source2: {0.source2!s} \n'+\
+                'frequency: {0.frequency!s} \n'+\
+                'filein1: {0.filein1!s} \n'+h1b
+            return(ss.format(self))
+        else:
+            return 'Interpolate instance'
+
+    def f_time_average(self):
+        """Time average data."""
+        # Extract input data for current block of time
+        time1,time2=block_times(self,verbose=self.verbose)
+        time_constraint=iris.Constraint(time = lambda cell: time1 <= cell <= time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x1=self.data_in.extract(time_constraint)
+        self.cube_in=x1.concatenate_cube()
+        time_units=self.cube_in.coord('time').units
+        
+        if self.frequency=='d':
+            # Creating daily average data
+            timedelta_day=datetime.timedelta(days=1)
+            timec1=time1
+            # Create empty CubeList
+            x10=iris.cube.CubeList([])
+            while timec1<time2:
+                # Extract data over current day
+                timec2=timec1+timedelta_day
+                print(timec1,timec2)
+                # Note careful use of <= and < in time_constraint
+                time_constraintc=iris.Constraint(time = lambda cell: time1c <= cell < time2c)
+                with iris.FUTURE.context(cell_datetime_objects=True):
+                    x1=self.data_in.extract(time_constraint)
+                x2=x1.concatenate_cube()
+                # Calculate daily mean
+                x3=x2.collapsed('time',iris.analysis.MEAN)
+                # Reset auxilliary time coordinate for current day at 00 UTC
+                timec_val=time_units.date2num(timec1)
+                timec_coord=iris.coords.DimCoord(timec_val,standard_name='time',units=time_units)
+                x3.remove_coord('time')
+                x3.add_aux_coord(timec_coord)
+                # Append current daily mean to cube list
+                x10.append(x3)
+                # Increment time
+                timec1+=timedelta_day
+            x11=x10.merge_cube()
+        else:
+            raise UserWarning('Need code to average over something other than daily.')
+        # Convert units for selected data sources
+        if self.source1 in ['trmm3b42v7_sfc_3',] and self.source2 in ['trmm3b42v7_sfc_d',]:
+            print("Converting TRMM precipitation from 3-hourly in 'mm hr-1' to daily mean in 'mm day-1'")
+            x11.convert_units('mm day-1')
+        self.cube_out=x11
+        # Save time averaged cube
+        if self.outfile_frequency=='year':
+            x2=str(self.year)
+        elif self.outfile_frequency=='month':
+            x2=str(self.year)+str(self.month).zfill(2)
+        else:
+            raise UserWarning('outfile_frequency not recognised')
+        self.fileout1=os.path.join(self.basedir,self.source2,'std',self.var_name+'_'+str(self.level)+'_'+x2+'.nc')
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.cube_out,self.fileout1)
+        
+#==========================================================================
+
 class Interpolate(object):
     """Interpolate data using iris.analysis.interpolate.
+
+    Called from interpolate.py.
+
+    N.B.  To decrease time resolution of data, e.g., from 3-hourly to
+    daily, use the TimeAverage class instead.
+
+    Selected attributes:
+
+    self.source1 : input source, e.g., sstrey_sfc_w weekly data.
+
+    self.source2 : output source, e.g., sstrey_sfc_d daily data.  The
+    data_source and level_type parts of self.source1 and self.source 2
+    should be identical.
 
     """
 
@@ -1106,7 +1354,9 @@ class Interpolate(object):
 class Hovmoller(object):
     """Create a Hovmoller object.
 
-    Attributes:
+    Called from hovmoller.py.
+
+    Selected attributes:
 
     self.data_in : iris cube list of all input data.
 
@@ -1203,6 +1453,8 @@ class Hovmoller(object):
 
 class Wind(object):
     """Create a Wind object.
+
+    Called from wind.py.
 
     Wrapper for windspharm VectorWind object to handle file i/o.
 
@@ -1385,6 +1637,8 @@ class Wind(object):
 
 class AnnualCycle(object):
     """Calculate and subtract annual cycle.
+
+    Called from anncycle.py
 
     Assumes input data has equally spaced time intervals.
 

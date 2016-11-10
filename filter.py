@@ -1,18 +1,24 @@
+"""Time filter data using data_analysis.TimeFilter."""
+
 import data_analysis as da
 import iris
 import iris.quickplot as qplt
 import matplotlib.pyplot as plt
 import datetime
 
-VAR_NAME='sst'; LEVEL=1; SOURCE='sstrey_sfc_d'
+VAR_NAME='ppt'; LEVEL=1; SOURCE='trmm3b42v7_sfc_d'
 
 FILTER='rm11_n5'
 
 FILEPRE='' # e.g., '', '_rac',
 
+YEARS=[2016,]
+
 VERBOSE=2
 
-PLOT=True
+PLOT=False
+
+#==========================================================================
 
 descriptor={}
 descriptor['file_weights']='/gpfs/home/e058/home/data/weights/w_'+FILTER+'.txt'
@@ -21,14 +27,14 @@ descriptor['level']=LEVEL
 descriptor['source']=SOURCE
 descriptor['basedir']='/gpfs/afm/matthews/data/'
 descriptor['filter']=FILTER
-descriptor['filein1']=descriptor['basedir']+descriptor['source']+'/raw/'+\
+descriptor['filein1']=descriptor['basedir']+descriptor['source']+'/std/'+\
                        descriptor['var_name']+'_'+str(descriptor['level'])+\
                        FILEPRE+'_????.nc'
 
 # Create instance of TimeFilter object
 aa=da.TimeFilter(descriptor,verbose=VERBOSE)
 
-for year in [2016,]:
+for year in YEARS:
     print('#### {0!s}\n'.format(year))
     aa.year=year
     aa.timeout1=datetime.datetime(year,1,1,0,0)

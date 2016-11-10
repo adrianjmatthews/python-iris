@@ -1,3 +1,5 @@
+"""Calculate and subtract annual cycle using data_analysis.AnnualCycle."""
+
 import data_analysis as da
 import iris
 import iris.quickplot as qplt
