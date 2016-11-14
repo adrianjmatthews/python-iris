@@ -83,6 +83,9 @@ def source_info(self):
     data_source:  e.g., 'ncepdoe', 'olrinterp'
     level_type:  e.g., 'plev' for pressure level, 'toa' for top of atmosphere
     frequency: e.g., 'd' for daily, '3' for 3-hourly
+
+    outfile_frequency: e.g., 'year' or 'month'
+    wildcard: e.g., '????' or '??????'
     
     """
     # Split source attribute string using underscores as separators
@@ -99,8 +102,10 @@ def source_info(self):
     # Set outfile_frequency attribute depending on source information
     if self.source in ['ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
         self.outfile_frequency='year'
+        self.wildcard='????'
     elif self.source in ['trmm3b42v7_sfc_3','trmm3b42v7_sfc_d']:
         self.outfile_frequency='month'
+        self.wildcard='??????'
     else:
         raise UserWarning('Need to specify outfile_frequency for this data source.')
     # Printed output
@@ -109,7 +114,8 @@ def source_info(self):
             'data source: {0.data_source!s} \n'+\
             'level_type: {0.level_type!s} \n'+\
             'frequency: {0.frequency!s} \n'+\
-            'outfile_frequency: {0.outfile_frequency!s} \n'+h2b
+            'outfile_frequency: {0.outfile_frequency!s} \n'+\
+            'wildcard: {0.wildcard!s} \n'+h2b
         print(ss.format(self))
                 
 #==========================================================================
@@ -261,6 +267,41 @@ def block_times(self,verbose=False):
             'time2: {1!s} \n'+h2b
         print(ss.format(time1,time2))
     return time1,time2
+
+#==========================================================================
+
+def replace_wildcard_with_time(self,string1):
+    """Replace wild card question marks with current time.
+
+    Input <self> is an object with the following attributes:
+
+    outfile_frequency:  e.g., 'year' or 'month'
+    wildcard: e.g., '????' or '??????'
+    year: integer for current year, e.g., 2016
+    month: integer for current month, in range 1 to 12.
+
+    Input <string1> is a string, usually a filename, which contains
+    wild card question marks, e.g., ???? or ??????.
+
+    The wild card question marks are replaced with the current date,
+    e.g., YYYY or YYYYMM, depending on self.outfile_frequency.
+
+    Output is <string2>, typically a filename referring to a specific
+    date or range of dates (e.g., year and month).
+
+    """
+
+    # Set wild card string
+    if self.outfile_frequency=='year':
+        x2=str(self.year)
+    elif self.outfile_frequency=='month':
+        x2=str(self.year)+str(self.month).zfill(2)
+    else:
+        raise UserWarning('Need to code up for different outfile_frequency')
+    # Replace wild card characters
+    string2=string1.replace(self.wildcard,x2)
+
+    return string2
 
 #==========================================================================
 
@@ -987,15 +1028,20 @@ class TimeFilter(object):
     def __init__(self,descriptor,verbose=False):
         self.descriptor=descriptor
         self.verbose=verbose
+        self.basedir=descriptor['basedir']
+        self.level=descriptor['level']
         self.filter=descriptor['filter']
         self.file_weights=descriptor['file_weights']
         self.f_weights()
-        self.filein1=descriptor['filein1']
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
+        self.source=descriptor['source']
+        source_info(self)
+        self.filepre=descriptor['filepre']
+        self.filein1=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
+        self.data_in=iris.load(self.filein1,self.name)
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.filein1,self.name)
-        self.source=descriptor['source']
         xx=self.source.split('_')
         self.frequency=xx[2]
         if self.frequency=='d':
@@ -1058,11 +1104,18 @@ class TimeFilter(object):
     def time_filter(self):
         """Filter using the rolling_window cube method and save data."""
 
+        # Set start and end time of output data
+        self.timeout1,self.timeout2=block_times(self,verbose=self.verbose)
         # Calculate start and end time of input data
         self.timein1=self.timeout1-self.timedelta
         self.timein2=self.timeout2+self.timedelta
         # Set output file name
-        self.fileout1=self.filein1.replace('????',self.filter+'_'+str(self.year))
+        if self.outfile_frequency=='year':
+            self.fileout1=self.filein1.replace(self.wildcard,self.filter+'_'+str(self.year))
+        elif self.outfile_frequency=='month':
+            self.fileout1=self.filein1.replace(self.wildcard,self.filter+'_'+str(self.year)+str(self.month).zfill(2))
+        else:
+            raise UserWarning('outfile_frequency not recognised')
         if self.verbose==2:
             ss=h2a+'timein1: {0.timein1!s} \n'+\
                 'timeout1: {0.timeout1!s} \n'+\
@@ -1150,13 +1203,7 @@ class TimeAverage(object):
         self.source2=descriptor['source2']
         self.source=self.source2
         source_info(self)
-        if self.outfile_frequency=='year':
-            x1='????'
-        elif self.outfile_frequency=='month':
-            x1='??????'
-        else:
-            raise UserWarning('outfile_frequency not recognised')
-        self.filein1=os.path.join(self.basedir,self.source1,'std',self.var_name+'_'+str(self.level)+'_'+x1+'.nc')
+        self.filein1=os.path.join(self.basedir,self.source1,'std',self.var_name+'_'+str(self.level)+'_'+self.wildcard+'.nc')
         self.data_in=iris.load(self.filein1,self.name)
         if self.verbose:
             print(self)        
@@ -1197,9 +1244,9 @@ class TimeAverage(object):
                 timec2=timec1+timedelta_day
                 print(timec1,timec2)
                 # Note careful use of <= and < in time_constraint
-                time_constraintc=iris.Constraint(time = lambda cell: time1c <= cell < time2c)
+                time_constraintc=iris.Constraint(time = lambda cell: timec1 <= cell < timec2)
                 with iris.FUTURE.context(cell_datetime_objects=True):
-                    x1=self.data_in.extract(time_constraint)
+                    x1=self.data_in.extract(time_constraintc)
                 x2=x1.concatenate_cube()
                 # Calculate daily mean
                 x3=x2.collapsed('time',iris.analysis.MEAN)
@@ -1341,7 +1388,7 @@ class Interpolate(object):
             cm=iris.coords.CellMethod('point','time',comments='linearly interpolated from weekly to daily time dimension')
             self.cube_out.add_cell_method(cm)
             # Save interpolated data
-            fileout=self.file_data_out.replace('????',str(self.year))
+            fileout=replace_wildcard_with_time(self,self.file_data_out)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.cube_out,fileout)
@@ -1436,7 +1483,7 @@ class Hovmoller(object):
         x3.add_cell_method(cm)
         self.data_hov_current=x3
         # Save Hovmoller data
-        fileout=self.file_data_hov.replace('????',str(self.year))
+        fileout=replace_wildcard_with_time(self,self.file_data_hov)
         print('fileout: {0!s}'.format(fileout))
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.data_hov_current,fileout)
@@ -1558,6 +1605,8 @@ class Wind(object):
 
     def f_wind(self):
         """Calculate and save streamfunction etc."""
+        # Set current time range
+        self.time1,self.time2=block_times(self,verbose=self.verbose)
         # Read uwnd and vwnd for current time range
         time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
         with iris.FUTURE.context(cell_datetime_objects=True):
@@ -1572,8 +1621,8 @@ class Wind(object):
             self.psi,self.chi=self.ww.sfvp()
             self.psi.var_name=self.var_name_psi
             self.chi.var_name=self.var_name_chi
-            fileout1=self.file_data_psi.replace('????',str(self.year))
-            fileout2=self.file_data_chi.replace('????',str(self.year))
+            fileout1=replace_wildcard_with_time(self,self.file_data_psi)
+            fileout2=replace_wildcard_with_time(self,self.file_data_chi)
             print('fileout1: {0!s}'.format(fileout1))
             print('fileout2: {0!s}'.format(fileout2))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
@@ -1583,7 +1632,7 @@ class Wind(object):
         elif self.flag_psi:
             self.psi=self.ww.streamfunction()
             self.psi.var_name=self.var_name_psi
-            fileout=self.file_data_psi.replace('????',str(self.year))
+            fileout=replace_wildcard_with_time(self,self.file_data_psi)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.psi,fileout)
@@ -1591,7 +1640,7 @@ class Wind(object):
         elif self.flag_chi:
             self.chi=self.ww.velocitypotential()
             self.chi.var_name=self.var_name_chi
-            fileout=self.file_data_chi.replace('????',str(self.year))
+            fileout=replace_wildcard_with_time(self,self.file_data_chi)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.chi,fileout)
@@ -1600,8 +1649,8 @@ class Wind(object):
             self.vrt,self.div=self.ww.vrtdiv()
             self.vrt.var_name=self.var_name_vrt
             self.div.var_name=self.var_name_div
-            fileout1=self.file_data_vrt.replace('????',str(self.year))
-            fileout2=self.file_data_div.replace('????',str(self.year))
+            fileout1=replace_wildcard_with_time(self,self.file_data_vrt)
+            fileout1=replace_wildcard_with_time(self,self.file_data_div)
             print('fileout1: {0!s}'.format(fileout1))
             print('fileout2: {0!s}'.format(fileout2))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
@@ -1611,7 +1660,7 @@ class Wind(object):
         elif self.flag_vrt:
             self.vrt=self.ww.vorticity()
             self.vrt.var_name=self.var_name_vrt
-            fileout=self.file_data_vrt.replace('????',str(self.year))
+            fileout=replace_wildcard_with_time(self,self.file_data_vrt)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.vrt,fileout)
@@ -1619,7 +1668,7 @@ class Wind(object):
         elif self.flag_div:
             self.div=self.ww.divergence()
             self.div.var_name=self.var_name_div
-            fileout=self.file_data_div.replace('????',str(self.year))
+            fileout=replace_wildcard_with_time(self,self.file_data_div)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.div,fileout)
@@ -1627,7 +1676,7 @@ class Wind(object):
         if self.flag_wndspd:
             self.wndspd=self.ww.magnitude()
             self.wndspd.var_name=self.var_name_wndspd
-            fileout=self.file_data_wndspd.replace('????',str(self.year))
+            fileout=replace_wildcard_with_time(self,self.file_data_wndspd)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.wndspd,fileout)
@@ -1685,17 +1734,25 @@ class AnnualCycle(object):
     def __init__(self,descriptor,verbose=False):
         self.descriptor=descriptor
         self.verbose=verbose
-        self.file_data_in=descriptor['file_data_in']
-        self.file_anncycle_raw=descriptor['file_anncycle_raw']
-        self.file_anncycle_smooth=descriptor['file_anncycle_smooth']
-        self.file_anncycle_smooth_leap=self.file_anncycle_smooth.replace('.','_leap.')
-        self.file_anncycle_rm=descriptor['file_anncycle_rm']
-        self.var_name=descriptor['var_name']
-        self.name=var_name2standard_name[self.var_name]
         self.source=descriptor['source']
         source_info(self)
+        self.basedir=descriptor['basedir']
+        self.var_name=descriptor['var_name']
+        self.name=var_name2standard_name[self.var_name]
+        self.level=descriptor['level']
         self.year1=descriptor['year1']
         self.year2=descriptor['year2']
+        self.file_data_in=os.path.join(self.basedir,self.source,'std',
+              self.var_name+'_'+str(self.level)+'_'+self.wildcard+'.nc')
+        self.file_anncycle_raw=os.path.join(self.basedir,self.source,
+              'processed',self.var_name+'_'+str(self.level)+'_ac_raw_'+\
+              str(self.year1)+'_'+str(self.year2)+'.nc')
+        self.file_anncycle_smooth=os.path.join(self.basedir,self.source,
+              'processed',self.var_name+'_'+str(self.level)+'_ac_smooth_'+\
+              str(self.year1)+'_'+str(self.year2)+'.nc')
+        self.file_anncycle_smooth_leap=self.file_anncycle_smooth.replace('.','_leap.')
+        self.file_anncycle_rm=os.path.join(self.basedir,self.source,'std',
+              self.var_name+'_'+str(self.level)+'_rac_'+self.wildcard+'.nc')
         self.nharm=descriptor['nharm']
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.file_data_in,self.name)
@@ -2141,7 +2198,8 @@ class AnnualCycle(object):
                 cm=iris.coords.CellMethod('point','time',comments='anomaly: subtracted smoothed annual cycle: '+str(self.year1)+'-'+str(self.year2)+': mean + '+str(self.nharm)+' harmonics')
                 data_anom.add_cell_method(cm)
                 # Save anomaly data (anncycle subtracted)
-                fileout=self.file_anncycle_rm.replace('????',str(yearc))
+                self.year=yearc
+                fileout=replace_wildcard_with_time(self,self.file_anncycle_rm)
                 print('fileout: {0!s}'.format(fileout))
                 with iris.FUTURE.context(netcdf_no_unlimited=True):
                     iris.save(data_anom,fileout)
