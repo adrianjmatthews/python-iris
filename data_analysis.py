@@ -1,4 +1,4 @@
-"""Data analysis using iris.
+"""Data analysis module using iris.
 
 Classes that provide iris data i/o wrappers to data analysis methods,
 often also using the iris module, for analysis of meteorological and
@@ -75,8 +75,10 @@ var_name2standard_name={
 
 #==========================================================================
 
-def source_info(self):
-    """Create attributes based on the source attribute.
+def source_info(aa):
+    """Create attributes of an object based on the source attribute.
+
+    aa is an object.
 
     Attributes created are:
 
@@ -89,34 +91,34 @@ def source_info(self):
     
     """
     # Split source attribute string using underscores as separators
-    xx=self.source.split('_')
+    xx=aa.source.split('_')
     if len(xx)!=3:
-        raise UserWarning("source attribute '{0.source!s}' must have three parts separated by underscores".format(self))
-    self.data_source=xx[0]
-    self.level_type=xx[1]
-    self.frequency=xx[2]
+        raise UserWarning("source attribute '{0.source!s}' must have three parts separated by underscores".format(aa))
+    aa.data_source=xx[0]
+    aa.level_type=xx[1]
+    aa.frequency=xx[2]
     # Check data_source attribute is valid
     valid_data_sources=['ncepdoe','ncepncar','olrcdr','olrinterp','sstrey','trmm3b42v7','tropflux']
-    if self.data_source not in valid_data_sources:
-        raise UserWarning('data_source {0.data_source!s} not vaild'.format(self))
+    if aa.data_source not in valid_data_sources:
+        raise UserWarning('data_source {0.data_source!s} not vaild'.format(aa))
     # Set outfile_frequency attribute depending on source information
-    if self.source in ['ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
-        self.outfile_frequency='year'
-        self.wildcard='????'
-    elif self.source in ['trmm3b42v7_sfc_3','trmm3b42v7_sfc_d']:
-        self.outfile_frequency='month'
-        self.wildcard='??????'
+    if aa.source in ['ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
+        aa.outfile_frequency='year'
+        aa.wildcard='????'
+    elif aa.source in ['trmm3b42v7_sfc_3','trmm3b42v7_sfc_d']:
+        aa.outfile_frequency='month'
+        aa.wildcard='??????'
     else:
         raise UserWarning('Need to specify outfile_frequency for this data source.')
     # Printed output
-    if self.verbose:
+    if aa.verbose:
         ss=h2a+'source_info.  Created attributes: \n'+\
             'data source: {0.data_source!s} \n'+\
             'level_type: {0.level_type!s} \n'+\
             'frequency: {0.frequency!s} \n'+\
             'outfile_frequency: {0.outfile_frequency!s} \n'+\
             'wildcard: {0.wildcard!s} \n'+h2b
-        print(ss.format(self))
+        print(ss.format(aa))
                 
 #==========================================================================
 
@@ -219,6 +221,7 @@ def conv_float32(old_array):
     Input: old_array should be a numpy array.
 
     Returns new_array, a numpy array of type float32.
+
     """
 
     new_array=old_array.astype(type('float32',(np.float32,),{}))
@@ -226,10 +229,10 @@ def conv_float32(old_array):
 
 #==========================================================================
 
-def block_times(self,verbose=False):
+def block_times(aa,verbose=False):
     """Set start and end times for current block.
 
-    Input <self> is an object with the following attributes:
+    Input <aa> is an object with the following attributes:
 
     outfile_frequency:  e.g., 'year' or 'month'
     year: integer for current year, e.g., 2016
@@ -249,17 +252,16 @@ def block_times(self,verbose=False):
     of the following month.
 
     """
-    
     timedelta_second=datetime.timedelta(seconds=1)
-    if self.outfile_frequency=='year':
-        time1=datetime.datetime(self.year,1,1)
-        time2=datetime.datetime(self.year+1,1,1)-timedelta_second
-    elif self.outfile_frequency=='month':
-        time1=datetime.datetime(self.year,self.month,1)
-        if self.month!=12:
-            time2=datetime.datetime(self.year,self.month+1,1)-timedelta_second
+    if aa.outfile_frequency=='year':
+        time1=datetime.datetime(aa.year,1,1)
+        time2=datetime.datetime(aa.year+1,1,1)-timedelta_second
+    elif aa.outfile_frequency=='month':
+        time1=datetime.datetime(aa.year,aa.month,1)
+        if aa.month!=12:
+            time2=datetime.datetime(aa.year,aa.month+1,1)-timedelta_second
         else:
-            time2=datetime.datetime(self.year+1,1,1)-timedelta_second
+            time2=datetime.datetime(aa.year+1,1,1)-timedelta_second
     else:
         raise UserWarning("Need to write code for other outfile_frequency.")
     if verbose:
@@ -270,10 +272,10 @@ def block_times(self,verbose=False):
 
 #==========================================================================
 
-def replace_wildcard_with_time(self,string1):
+def replace_wildcard_with_time(aa,string1):
     """Replace wild card question marks with current time.
 
-    Input <self> is an object with the following attributes:
+    Input <aa> is an object with the following attributes:
 
     outfile_frequency:  e.g., 'year' or 'month'
     wildcard: e.g., '????' or '??????'
@@ -284,28 +286,28 @@ def replace_wildcard_with_time(self,string1):
     wild card question marks, e.g., ???? or ??????.
 
     The wild card question marks are replaced with the current date,
-    e.g., YYYY or YYYYMM, depending on self.outfile_frequency.
+    e.g., YYYY or YYYYMM, depending on aa.outfile_frequency.
 
     Output is <string2>, typically a filename referring to a specific
     date or range of dates (e.g., year and month).
 
     """
-
     # Set wild card string
-    if self.outfile_frequency=='year':
-        x2=str(self.year)
-    elif self.outfile_frequency=='month':
-        x2=str(self.year)+str(self.month).zfill(2)
+    if aa.outfile_frequency=='year':
+        x2=str(aa.year)
+    elif aa.outfile_frequency=='month':
+        x2=str(aa.year)+str(aa.month).zfill(2)
     else:
         raise UserWarning('Need to code up for different outfile_frequency')
     # Replace wild card characters
-    string2=string1.replace(self.wildcard,x2)
+    string2=string1.replace(aa.wildcard,x2)
 
     return string2
 
 #==========================================================================
 
 class TimeDomain(object):
+
     """A set of single or paired (start,end) times.
 
     A set of single times can be used as the basis of (lagged)
@@ -489,7 +491,9 @@ class TimeDomain(object):
         
     def datetime2ascii(self):
         """Convert datetime representation of timedomain to ascii.
+
         Create a lines attribute.
+
         """
         # Convert datetime objects to ascii strings
         lines=[]
@@ -521,6 +525,7 @@ class TimeDomain(object):
         'Single' type is list of single times.
 
         'Event' type is list of paired (start,end) times.
+
         """
         t1=self.datetimes[0]
         if len(t1)==1:
@@ -541,6 +546,7 @@ class TimeDomain(object):
 #==========================================================================
 
 class DataConverter(object):
+
     """Converter to iris-friendly standard format netcdf files.
 
     Called from preprocess.py.
@@ -622,9 +628,7 @@ class DataConverter(object):
     """
     
     def __init__(self,descriptor,verbose=True):
-        """Initialise from descriptor dictionary.
-
-        """
+        """Initialise from descriptor dictionary."""
         self.descriptor=descriptor
         self.verbose=verbose
         self.source=descriptor['source']
@@ -672,6 +676,7 @@ class DataConverter(object):
 
         Code is by necessity ad hoc as it caters for many different
         data sources with different input formats.
+
         """
         # Set time constraint for current time block
         time1,time2=block_times(self,verbose=self.verbose)
@@ -827,9 +832,7 @@ class DataConverter(object):
             self.cube=x5
 
     def write_cube(self):
-        """Write standardised iris cube to netcdf file.
-
-        """
+        """Write standardised iris cube to netcdf file."""
         # Set output file name
         if self.outfile_frequency=='year':
             self.fileout1=os.path.join(self.basedir,self.source,'std/',self.var_name+'_'+str(self.level)+'_'+str(self.year)+'.nc')
@@ -846,6 +849,7 @@ class DataConverter(object):
 #==========================================================================
 
 class TimeDomStats(object):
+
     """Time mean and other statistics of data over non-contiguous time domain.
 
     Called from several scripts, including mean.py.
@@ -878,9 +882,7 @@ class TimeDomStats(object):
     """
 
     def __init__(self,descriptor,verbose=False):
-        """Initialise from descriptor dictionary.
-
-        """
+        """Initialise from descriptor dictionary."""
         self.ntimemin=5
         self.__dict__.update(descriptor)
         self.descriptor=descriptor
@@ -923,7 +925,9 @@ class TimeDomStats(object):
     def event_means(self):
         """Calculate time mean and ntime for each event in time domain.
 
-        Create cube_event_means and cube_event_ntimes attributes."""
+        Create cube_event_means and cube_event_ntimes attributes.
+
+        """
         # Check that time domain is of type 'event'
         self.tdomain.time_domain_type()
         if self.tdomain.type!='event':
@@ -958,7 +962,9 @@ class TimeDomStats(object):
         cube_event_means.  Hence, each individual time (e.g., day) in the
         original data has equal weighting.
 
-        Create attribute time_mean"""
+        Create attribute time_mean.
+
+        """
         # Contribution from first event mean
         ntime_total=0
         ntime=self.cube_event_ntimes[0]
@@ -980,6 +986,7 @@ class TimeDomStats(object):
 #==========================================================================
 
 class TimeFilter(object):
+    
     """Time filter using rolling_window method of iris cube.
 
     Called from filter.py.
@@ -1025,6 +1032,7 @@ class TimeFilter(object):
     self.fileout1 : path name for file of output (filtered) data.
     
     """
+
     def __init__(self,descriptor,verbose=False):
         self.descriptor=descriptor
         self.verbose=verbose
@@ -1085,8 +1093,8 @@ class TimeFilter(object):
         nn=(nfilter-1)/2
 
         Create nweights, nn and weights attributes.
+
         """
-        
         # Read ASCII filter weights
         f1=open(self.file_weights)
         lines=f1.readlines()
@@ -1103,7 +1111,6 @@ class TimeFilter(object):
 
     def time_filter(self):
         """Filter using the rolling_window cube method and save data."""
-
         # Set start and end time of output data
         self.timeout1,self.timeout2=block_times(self,verbose=self.verbose)
         # Calculate start and end time of input data
@@ -1147,6 +1154,7 @@ class TimeFilter(object):
 #==========================================================================
 
 class TimeAverage(object):
+    
     """Time average data e.g., convert from 3-hourly to daily mean.
 
     Called from time_average.py.
@@ -1281,6 +1289,7 @@ class TimeAverage(object):
 #==========================================================================
 
 class Interpolate(object):
+    
     """Interpolate data using iris.analysis.interpolate.
 
     Called from interpolate.py.
@@ -1399,6 +1408,7 @@ class Interpolate(object):
 #==========================================================================
 
 class Hovmoller(object):
+    
     """Create a Hovmoller object.
 
     Called from hovmoller.py.
@@ -1459,6 +1469,7 @@ class Hovmoller(object):
         """Create cube of Hovmoller data and save.
 
         Create data_hov_current attribute.
+        
         """
         # Extract input data for current time block, and 
         # for dimension band_name, between band_val1 and band_val1
@@ -1499,6 +1510,7 @@ class Hovmoller(object):
 #==========================================================================
 
 class Wind(object):
+    
     """Create a Wind object.
 
     Called from wind.py.
@@ -1685,6 +1697,7 @@ class Wind(object):
 #==========================================================================
 
 class AnnualCycle(object):
+    
     """Calculate and subtract annual cycle.
 
     Called from anncycle.py
@@ -1729,6 +1742,7 @@ class AnnualCycle(object):
     smoothed annual cycle subtracted.  Contains a wild card ????
     character, which will be replaced by, e.g., year numbers (if
     self.outfile_frequency is 'year').
+    
     """
 
     def __init__(self,descriptor,verbose=False):
@@ -1800,6 +1814,7 @@ class AnnualCycle(object):
         have left the code here as it has some good iris pointers.
 
         Create data_anncycle_raw attribute.
+        
         """
         raise UserWarning('Use f_anncycle_raw instead')
         if self.frequency!='d':
@@ -1858,6 +1873,7 @@ class AnnualCycle(object):
         a leap year.
 
         Create data_anncycle_raw attribute.
+        
         """
         if self.frequency!='d':
             raise UserWarning('Annual cycle presently only coded up for daily data.')
@@ -1956,6 +1972,7 @@ class AnnualCycle(object):
         """Read previously created raw annual cycle.
 
         Create data_anncycle_raw attribute.
+        
         """
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_anncycle_raw=iris.load_cube(self.file_anncycle_raw,self.name)
@@ -1977,6 +1994,7 @@ class AnnualCycle(object):
 
         Create data_mean, data_anncycle_smooth,
         data_anncycle_smooth_leap attributes.
+        
         """
         # Calculate annual mean
         print('data_anncycle_raw.shape: {0!s}'.format(self.data_anncycle_raw.shape))
@@ -2118,6 +2136,7 @@ class AnnualCycle(object):
 
         Create data_anncycle_smooth and data_anncycle_smooth_leap
         attributes.
+        
         """
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_anncycle_smooth=iris.load_cube(self.file_anncycle_smooth,self.name)
@@ -2134,6 +2153,7 @@ class AnnualCycle(object):
         end on 31 Dec.
 
         Create data_anncycle_rm attribute.
+        
         """
         # Set initial value of current year
         yearc=self.time1.year
@@ -2215,6 +2235,7 @@ class AnnualCycle(object):
         """Read previously calculatedanomaly data (annual cycle subtracted).
 
         Create data_anncycle_rm attribute.
+        
         """
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_anncycle_rm=iris.load(self.file_anncycle_rm,self.name)
