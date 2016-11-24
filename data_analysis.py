@@ -883,16 +883,20 @@ class TimeDomStats(object):
 
     def __init__(self,descriptor,verbose=False):
         """Initialise from descriptor dictionary."""
-        self.ntimemin=5
-        self.__dict__.update(descriptor)
         self.descriptor=descriptor
+        self.verbose=verbose
+        self.basedir=descriptor['basedir']
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
         self.level=descriptor['level']
         self.source=descriptor['source']
+        source_info(self)
         self.tdomainid=descriptor['tdomainid']
-        self.filein1=descriptor['filein1']
-        self.fileout1=descriptor['fileout1']
+        self.filepre=descriptor['filepre']
+        self.filein1=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
+        #self.filein1=descriptor['filein1']
+        self.fileout1=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'.nc')
+        #self.fileout1=descriptor['fileout1']
         if 'ntimemin' in descriptor:
             self.ntimemin=descriptor['ntimemin']
         else:
