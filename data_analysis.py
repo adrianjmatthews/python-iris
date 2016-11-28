@@ -105,7 +105,7 @@ def source_info(aa):
     if aa.source in ['ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
         aa.outfile_frequency='year'
         aa.wildcard='????'
-    elif aa.source in ['trmm3b42v7_sfc_3','trmm3b42v7_sfc_d']:
+    elif aa.source in ['trmm3b42v7_sfc_3h','trmm3b42v7_sfc_d']:
         aa.outfile_frequency='month'
         aa.wildcard='??????'
     else:
@@ -465,7 +465,12 @@ class TimeDomain(object):
         
         Create a partial_date_times attribute.
 
+        This method should not be needed.  I was confused over partial
+        date times and datetimes.  Just use datetimes.
+
         """
+        return UserWarning('This method should not be needed.  Use ascii2datetime instead.')
+        
         # First create datetimes attribute if it does not exist
         try:
             datetimes=self.datetimes
@@ -695,7 +700,7 @@ class DataConverter(object):
                 self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.wkmean.1990-present.nc')
             else:
                 raise UserWarning('Invalid year')
-        elif self.source in ['trmm3b42v7_sfc_3']:
+        elif self.source in ['trmm3b42v7_sfc_3h']:
             self.filein1=os.path.join(self.basedir,self.source,'raw',str(self.year)+str(self.month).zfill(2),'3B42.'+str(self.year)+str(self.month).zfill(2)+'*.7.nc')
         elif self.source in ['tropflux_sfc_d']:
             if self.var_name=='lhfd':
@@ -705,7 +710,7 @@ class DataConverter(object):
         # Set level constraint (set to False if none)
         if self.data_source in ['ncepdoe','ncepncar'] and self.level_type=='plev':
             level_constraint=iris.Constraint(Level=self.level)
-        elif self.source in ['ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','trmm3b42v7_sfc_3','tropflux_sfc_d']:
+        elif self.source in ['ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','trmm3b42v7_sfc_3h','tropflux_sfc_d']:
             level_constraint=False
         else:
             raise UserWarning('Set an instruction for level_constraint.')
@@ -894,18 +899,18 @@ class TimeDomStats(object):
         self.tdomainid=descriptor['tdomainid']
         self.filepre=descriptor['filepre']
         self.filein1=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
-        #self.filein1=descriptor['filein1']
-        self.fileout1=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'.nc')
-        #self.fileout1=descriptor['fileout1']
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_in=iris.load(self.filein1,self.name)
         if 'ntimemin' in descriptor:
             self.ntimemin=descriptor['ntimemin']
         else:
             self.ntimemin=5
-        self.verbose=verbose
         self.tdomain=TimeDomain(self.tdomainid,verbose=self.verbose)
         self.tdomain.read_ascii()
-        self.tdomain.ascii2partial_date_time()
+        self.tdomain.ascii2datetime()
         self.tdomain.f_nevents()
+        self.fileout_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'.nc')
+        self.fileout_dc=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_dc.nc')
         if self.verbose:
             print(self)
         
@@ -919,9 +924,11 @@ class TimeDomStats(object):
                 'level: {0.level!s} \n'+\
                 'source: {0.source!s} \n'+\
                 'tdomainid: {0.tdomainid!s} \n'+\
+                'ntimemin:{0.ntimemin!s} \n'+\
+                'data_in: {0.data_in!s} \n'+\
                 'filein1: {0.filein1!s} \n'+\
-                'fileout1: {0.fileout1!s} \n'+\
-                'ntimemin:{0.ntimemin!s} \n'+h1b
+                'fileout_mean: {0.fileout_mean!s} \n'+\
+                'fileout_dc: {0.fileout_dc!s} \n'+h1b
             return ss.format(self)
         else:
             return 'Statistics of '+self.source+' '+self.var_name+str(self.level)+' over '+self.tdomainid
@@ -936,26 +943,22 @@ class TimeDomStats(object):
         self.tdomain.time_domain_type()
         if self.tdomain.type!='event':
             raise UserWarning("Warning: time domain type is '{0.tdomain.type}'.  It must be 'event'.".format(self))
-        # Load list of cubes
-        with iris.FUTURE.context(netcdf_promote=True):
-            x1=iris.load(self.filein1,self.name)
         # Loop over events in time domain
         cube_event_means=[]
         cube_event_ntimes=[]
-        for eventc in self.tdomain.partial_date_times:
-            # Create time constraint
+        for eventc in self.tdomain.datetimes:
             time_beg=eventc[0]
             time_end=eventc[1]
             print('time_beg: {0!s}'.format(time_beg))
             print('time_end: {0!s}'.format(time_end))
             time_constraint=iris.Constraint(time=lambda cell: time_beg <=cell<= time_end)
             with iris.FUTURE.context(cell_datetime_objects=True):
-                x2=x1.extract(time_constraint)
-            x3=x2.concatenate_cube()
-            ntime=x3.coord('time').shape[0]
+                x1=self.data_in.extract(time_constraint)
+            x2=x1.concatenate_cube()
+            ntime=x2.coord('time').shape[0]
             cube_event_ntimes.append(ntime)
-            x4=x3.collapsed('time',iris.analysis.MEAN)
-            cube_event_means.append(x4)
+            x3=x2.collapsed('time',iris.analysis.MEAN)
+            cube_event_means.append(x3)
         self.cube_event_means=cube_event_means
         self.cube_event_ntimes=cube_event_ntimes
 
@@ -985,7 +988,97 @@ class TimeDomStats(object):
         time_mean.standard_name=self.name
         self.time_mean=time_mean
         with iris.FUTURE.context(netcdf_no_unlimited=True):
-            iris.save(self.time_mean,self.fileout1)
+            iris.save(self.time_mean,self.fileout_mean)
+
+    def f_diurnal_cycle(self):
+        """Calculate mean diurnal cycle.
+
+        Create attribute:
+
+        self.mean_dc : iris cube of mean diurnal cycle calculated over
+        time domain self.tdomain.
+
+        Note: initial attempt at coding this function used
+        PartialDateTime to extract data on each day for a given time
+        of day (e.g. 0300 UTC) and then average.  This took about
+        10-100 times longer to run than method here.
+        
+        """
+        # Set day counter
+        kount=0
+        # Extract first day in first event of time domain
+        xx=self.tdomain.datetimes[0]
+        first_day=xx[0]
+        last_day=xx[-1]
+        print('first_day,last_day: {0!s}, {1!s}'.format(first_day,last_day))
+        time1=datetime.datetime(first_day.year,first_day.month,first_day.day)
+        time2=datetime.datetime(first_day.year,first_day.month,first_day.day,23,59,59)
+        time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x1=self.data_in.extract(time_constraint)
+        x1=x1.concatenate_cube()
+        cube1=x1
+        data_sum=x1.data
+        kount+=1
+        print('kount,time1,time2: {0!s}, {1!s}, {2!s}'.format(kount,time1,time2))
+        #
+        # Create time coordinate for final diurnal cycle
+        # Extract times of day for data on first day
+        tc=x1.coord('time')
+        time_units=tc.units
+        x2=[tc.units.num2date(xx) for xx in tc.points]
+        # Reset these times to year=1,month=1,day=1
+        times_datetime=[datetime.datetime(1,1,1,xx.hour,xx.minute,xx.second) for xx in x2]
+        times_val=[time_units.date2num(xx) for xx in times_datetime]
+        time_coord=iris.coords.DimCoord(times_val,standard_name='time',units=time_units)
+        print('times_datetime: {0!s}'.format(times_datetime))
+        print('times_val: {0!s}'.format(times_val))
+        print('time_coord: {0!s}'.format(time_coord))
+        #
+        # Loop over (any) remaining days in first event of time domain and add data to data_sum
+        timedelta_day=datetime.timedelta(days=1)
+        time1+=timedelta_day
+        time2+=timedelta_day
+        while time1<=last_day:
+            time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+            with iris.FUTURE.context(cell_datetime_objects=True):
+                x1=self.data_in.extract(time_constraint)
+            x1=x1.concatenate_cube()
+            data_sum+=x1.data
+            kount+=1
+            print('kount,time1,time2: {0!s}, {1!s}, {2!s}'.format(kount,time1,time2))
+            time1+=timedelta_day
+            time2+=timedelta_day
+        # Loop over (any) remaining events in time domain and add data to data_sum
+        for xx in self.tdomain.datetimes[1:]:
+            first_day=xx[0]
+            last_day=xx[-1]
+            print('first_day,last_day: {0!s}, {1!s}'.format(first_day,last_day))
+            time1=datetime.datetime(first_day.year,first_day.month,first_day.day)
+            time2=datetime.datetime(first_day.year,first_day.month,first_day.day,23,59,59)
+            while time1<=last_day:
+                time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+                with iris.FUTURE.context(cell_datetime_objects=True):
+                    x1=self.data_in.extract(time_constraint)
+                x1=x1.concatenate_cube()
+                data_sum+=x1.data
+                kount+=1
+                print('kount,time1,time2: {0!s}, {1!s}, {2!s}'.format(kount,time1,time2))
+                time1+=timedelta_day
+                time2+=timedelta_day
+        # Divide by kount
+        data_mean=data_sum/kount
+        # Create iris cube using metadata from first day of input data
+        x10=create_cube(data_mean,cube1)
+        x10.remove_coord('time')
+        x10.add_dim_coord(time_coord,0)
+        # Add cell method to describe diurnal cycle
+        cm=iris.coords.CellMethod('point','time',comments='mean diurnal cycle over time domain '+self.tdomain.idx)
+        x10.add_cell_method(cm)
+        # Create mean_dc attribute
+        self.mean_dc=x10
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.mean_dc,self.fileout_dc)
             
 #==========================================================================
 
@@ -1051,7 +1144,7 @@ class TimeFilter(object):
         source_info(self)
         self.filepre=descriptor['filepre']
         self.filein1=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
-        self.data_in=iris.load(self.filein1,self.name)
+        #self.data_in=iris.load(self.filein1,self.name)
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.filein1,self.name)
         xx=self.source.split('_')
@@ -1176,7 +1269,7 @@ class TimeAverage(object):
 
     Selected attributes:
 
-    self.source1 : input source, e.g., trmm3b42v7_sfc_3 3-hourly data.
+    self.source1 : input source, e.g., trmm3b42v7_sfc_3h 3-hourly data.
 
     self.source2 : output source, e.g., trmm3b42v7_sfc_d daily data.
     The data_source and level_type parts of self.source1 and
@@ -1275,7 +1368,7 @@ class TimeAverage(object):
         else:
             raise UserWarning('Need code to average over something other than daily.')
         # Convert units for selected data sources
-        if self.source1 in ['trmm3b42v7_sfc_3',] and self.source2 in ['trmm3b42v7_sfc_d',]:
+        if self.source1 in ['trmm3b42v7_sfc_3h',] and self.source2 in ['trmm3b42v7_sfc_d',]:
             print("Converting TRMM precipitation from 3-hourly in 'mm hr-1' to daily mean in 'mm day-1'")
             x11.convert_units('mm day-1')
         self.cube_out=x11
