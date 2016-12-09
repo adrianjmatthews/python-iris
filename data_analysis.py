@@ -31,16 +31,17 @@ attribute).
 
 # All import statements here, before class definitions
 from __future__ import division, print_function, with_statement # So can run this in python2
-import iris
-from iris.time import PartialDateTime
-from iris.experimental.equalise_cubes import equalise_attributes
 import datetime
 import os.path
-import mypaths
 import pdb
+
+import iris
+from iris.time import PartialDateTime
 import numpy as np
-import matplotlib.pyplot as plt
+import scipy
 from windspharm.iris import VectorWind
+
+import mypaths
 
 # Header for use in calls to print
 h1a='<<<=============================================================\n'
@@ -52,25 +53,28 @@ h2b='--------------------------->>>\n'
 # var_name is used for file names and as the variable name in netcdf files
 # standard_name is the string used by iris to extract a cube from a netcdf file
 var_name2standard_name={
-    'uwnd':'eastward_wind',
-    'vwnd':'northward_wind',
-    'wwnd':'upward_air_velocity',
-    'wndspd':'wind_speed',
-    'pv':'ertel_potential_vorticity',
-    'div':'divergence_of_wind',
-    'vrt':'atmosphere_relative_vorticity',
     'chi':'atmosphere_horizontal_velocity_potential',
-    'omega':'lagrangian_tendency_of_air_pressure',
-    'psi':'atmosphere_horizontal_streamfunction',
+    'div':'divergence_of_wind',
     'ke':'specific_kinetic_energy_of_air',
-    'zg':'geopotential_height',
-    'mslp':'air_pressure_at_sea_level',
-    'psfc':'surface_air_pressure',
-    'ta':'air_temperature',
-    'olr':'toa_outgoing_longwave_flux',
-    'sst':'sea_surface_temperature',
+    'lat':'latitude',
     'lhfd':'surface_downward_latent_heat_flux',
+    'lon':'longitude',
+    'mslp':'air_pressure_at_sea_level',
+    'olr':'toa_outgoing_longwave_flux',
+    'omega':'lagrangian_tendency_of_air_pressure',
     'ppt':'lwe_precipitation_rate',
+    'psfc':'surface_air_pressure',
+    'psi':'atmosphere_horizontal_streamfunction',
+    'pv':'ertel_potential_vorticity',
+    'sst':'sea_surface_temperature',
+    'ta':'air_temperature',
+    'tsc':'sea_water_conservative_temperature',
+    'uwnd':'eastward_wind',
+    'vrt':'atmosphere_relative_vorticity',
+    'vwnd':'northward_wind',
+    'wndspd':'wind_speed',
+    'wwnd':'upward_air_velocity',
+    'zg':'geopotential_height',
     }
 
 #==========================================================================
@@ -88,6 +92,7 @@ def source_info(aa):
 
     outfile_frequency: e.g., 'year' or 'month'
     wildcard: e.g., '????' or '??????'
+    timedelta: datetime.timedelta object corresponding to the frequency attribute
     
     """
     # Split source attribute string using underscores as separators
@@ -98,11 +103,11 @@ def source_info(aa):
     aa.level_type=xx[1]
     aa.frequency=xx[2]
     # Check data_source attribute is valid
-    valid_data_sources=['ncepdoe','ncepncar','olrcdr','olrinterp','sstrey','trmm3b42v7','tropflux']
+    valid_data_sources=['erainterim','ncepdoe','ncepncar','olrcdr','olrinterp','sg579m031oi01','sg534m031oi01','sg532m031oi01','sg620m031oi01','sg613m031oi01','sstrey','trmm3b42v7','tropflux']
     if aa.data_source not in valid_data_sources:
         raise UserWarning('data_source {0.data_source!s} not vaild'.format(aa))
     # Set outfile_frequency attribute depending on source information
-    if aa.source in ['ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','sstrey_sfc_d','tropflux_sfc_d']:
+    if aa.source in ['erainterim_plev_6h','ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_7d','sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h','sstrey_sfc_d','tropflux_sfc_d']:
         aa.outfile_frequency='year'
         aa.wildcard='????'
     elif aa.source in ['trmm3b42v7_sfc_3h','trmm3b42v7_sfc_d']:
@@ -110,6 +115,20 @@ def source_info(aa):
         aa.wildcard='??????'
     else:
         raise UserWarning('Need to specify outfile_frequency for this data source.')
+    # timedelta attribute
+    if aa.frequency[-1]=='h':
+        if aa.frequency=='h':
+            aa.timedelta=datetime.timedelta(hours=1)
+        else:
+            aa.timedelta=datetime.timedelta(hours=int(aa.frequency[:-1]))
+    elif aa.frequency[-1]=='d':
+        if aa.frequency=='d':
+            aa.timedelta=datetime.timedelta(days=1)
+        else:
+            aa.timedelta=datetime.timedelta(days=int(aa.frequency[:-1]))
+    else:
+        raise UserWarning('Need to code up for different frequency attribute.')
+            
     # Printed output
     if aa.verbose:
         ss=h2a+'source_info.  Created attributes: \n'+\
@@ -117,6 +136,7 @@ def source_info(aa):
             'level_type: {0.level_type!s} \n'+\
             'frequency: {0.frequency!s} \n'+\
             'outfile_frequency: {0.outfile_frequency!s} \n'+\
+            'timedelta: {0.timedelta!s} \n'+\
             'wildcard: {0.wildcard!s} \n'+h2b
         print(ss.format(aa))
                 
@@ -179,26 +199,79 @@ def clean_callback(cube,field,filename):
 
 #==========================================================================
 
-def create_cube(array,oldcube):
+def create_cube(array,oldcube,new_axis=False):
     """Create an iris cube from a numpy array and attributes from an old cube.
 
-    Return newcube.
+    Inputs:
+
+    <array> must be a numpy array.
+
+    <oldcube>  must be an iris cube.
+
+    <new_axis> is either False, or an iris cube axis (e.g., a time axis).
+
+    Output:
+
+    <newcube> is an iris cube of the same shape as <array>
+
+    Usage:
+
+    There are two possible options.
+
+    If <new_axis> is False then array and oldcube must have the same
+    shape and dimensions.  <newcube> is then simply an iris cube
+    created from <array> and the coordinate axes and attributes of
+    <oldcube>.
+
+    If <new_axis> is an iris cube axis (e.g., a time axis), then
+    <array> and <oldcube> must have the same number of dimensions, but
+    one of the axes (the one that will correspond to <new_axis>) can
+    be a different length.  For example, <array> could have shape
+    (30,73,144), <oldcube> could have shape (365,73,144) with
+    dimensions of time,latitude,longitude, and <new_axis> would be a
+    time axis of length 30.  <newcube> would then be a cube with data
+    from <array>, the time axis of <new_axis> and latitude and
+    longitude axes from <oldcube>, plus all the attributes of
+    <oldcube>.
+
     
     """
-    # Check that array and oldcube have same dimensions
-    if array.shape!=oldcube.shape:
-        raise UserWarning('Shape of array and oldcube must match.')
-    # Create a list of two-lists, each of form [dim_coord,index]
-    kdim=0
-    dim_coords=[]
-    for xx in oldcube.dim_coords:
-        dim_coords.append([xx,kdim])
-        kdim+=1
+    if new_axis:
+        # new_axis is an iris coordinate axis
+        # Find the index of the corresponding axis in oldcube
+        coord_name=new_axis.standard_name
+        print('coord_name: {0!s}'.format(coord_name))
+        coord_names=[dimc.standard_name for dimc in oldcube.dim_coords]
+        print('coord_names: {0!s}'.format(coord_names))
+        if coord_name not in coord_names:
+            raise ValueError('coord_name is not in coord_names')
+        coord_index=coord_names.index(coord_name)
+        print('coord_index: {0!s}'.format(coord_index))
+        # Create a list of two-lists, each of form [dim_coord,index]
+        kdim=0
+        dim_coords=[]
+        for xx in oldcube.dim_coords:
+            dim_coords.append([xx,kdim])
+            kdim+=1
+        # Overwrite the coord_index'th axis with new_axis two-list
+        dim_coords[coord_index]=[new_axis,coord_index]
+    else:
+        # new_axis is False.
+        # Check that array and oldcube have same dimensions
+        if array.shape!=oldcube.shape:
+            raise UserWarning('Shape of array and oldcube must match.')
+        # Create a list of two-lists, each of form [dim_coord,index]
+        kdim=0
+        dim_coords=[]
+        for xx in oldcube.dim_coords:
+            dim_coords.append([xx,kdim])
+            kdim+=1
     # Create cube
     newcube=iris.cube.Cube(array,standard_name=oldcube.standard_name,var_name=oldcube.var_name,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
     # Add aux coords
     for xx in oldcube.aux_coords:
         newcube.add_aux_coord(xx)
+
     return newcube
 
 #==========================================================================
@@ -469,7 +542,7 @@ class TimeDomain(object):
         date times and datetimes.  Just use datetimes.
 
         """
-        return UserWarning('This method should not be needed.  Use ascii2datetime instead.')
+        raise DeprecationWarning('This method should not be needed.  Use ascii2datetime instead.')
         
         # First create datetimes attribute if it does not exist
         try:
@@ -593,11 +666,12 @@ class DataConverter(object):
 
     self.frequency : string denoting time frequency of data.  This is
     used in file names.  It is determined by self.source.  One of:
-       '3' 3-hourly
-       '6' 6-hourly
+       'h' hourly
+       '3h' 3-hourly
+       '6h' 6-hourly
        'd' daily
-       'p' pentad (5-day)
-       'w' weekly (7-day)
+       '5d' pentad (5-day)
+       '7d' weekly (7-day)
        'm' monthly (calendar month)
 
     self.outfile_frequency : string denoting the time coverage of the
@@ -654,7 +728,7 @@ class DataConverter(object):
                 # Mask should be 2-D (eg lat,lon) but with a third time
                 # dimension of length 1
                 raise UserWarning('Expecting 3-d mask of shape (1,?,?)')
-            if self.source=='sstrey_sfc_w':
+            if self.source=='sstrey_sfc_7d':
                 self.mask=1-self.mask # Switch the 1's and 0's
         if self.verbose:
             print(self)
@@ -671,7 +745,8 @@ class DataConverter(object):
                 'level: {0.level!s} \n'
             if self.file_mask:
                 ss+='file_mask: {0.file_mask!s} \n'+\
-                     'mask.shape: {0.mask.shape!s} \n'+h1b
+                     'mask.shape: {0.mask.shape!s} \n'
+            ss+=h1b
             return ss.format(self)
         else:
             return self.__repr__()
@@ -686,14 +761,19 @@ class DataConverter(object):
         # Set time constraint for current time block
         time1,time2=block_times(self,verbose=self.verbose)
         time_constraint=iris.Constraint(time = lambda cell: time1 <= cell <= time2)
+        #
         # Set input file name(s)
-        if self.source in ['ncepdoe_plev_d','ncepncar_plev_d']:
+        if self.source in ['erainterim_plev_6h']:
+            self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+str(self.level)+'_'+str(self.year)+'_6.nc')
+        elif self.source in ['ncepdoe_plev_d','ncepncar_plev_d']:
             self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.'+str(self.year)+'.nc')
         elif self.source in ['ncepncar_sfc_d',]:
             self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.sig995.'+str(self.year)+'.nc')
         elif self.source in ['olrcdr_toa_d','olrinterp_toa_d']:
             self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.day.mean.nc')
-        elif self.source in ['sstrey_sfc_w',]:
+        elif self.source in ['sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h',]:
+            self.filein1=os.path.join(self.basedir,self.source,'raw','oi_zt_2m3h_SG'+self.source[2:5]+'.nc')
+        elif self.source in ['sstrey_sfc_7d',]:
             if 1981<=self.year<=1989:
                 self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.wkmean.1981-1989.nc')
             elif 1990<=self.year:
@@ -701,19 +781,27 @@ class DataConverter(object):
             else:
                 raise UserWarning('Invalid year')
         elif self.source in ['trmm3b42v7_sfc_3h']:
-            self.filein1=os.path.join(self.basedir,self.source,'raw',str(self.year)+str(self.month).zfill(2),'3B42.'+str(self.year)+str(self.month).zfill(2)+'*.7.nc')
+            # Inconsistent file naming from NASA DISC
+            # 1998-1999 and 2011-2016 files end in .7.nc
+            # 2000-2010 files end in .7A.nc
+            # Use '.7*.nc' to cover both
+            self.filein1=os.path.join(self.basedir,self.source,'raw',str(self.year)+str(self.month).zfill(2),'3B42.'+str(self.year)+str(self.month).zfill(2)+'*.7*.nc')
         elif self.source in ['tropflux_sfc_d']:
             if self.var_name=='lhfd':
                 self.filein1=os.path.join(self.basedir,self.source,'raw','lhf_tropflux_1d_'+str(self.year)+'.nc')
         else:
             raise UserWarning('Data source not recognised')
+        #
         # Set level constraint (set to False if none)
-        if self.data_source in ['ncepdoe','ncepncar'] and self.level_type=='plev':
+        if self.data_source in ['erainterim'] and self.level_type=='plev':
+            level_constraint=iris.Constraint(p=self.level)
+        elif self.data_source in ['ncepdoe','ncepncar'] and self.level_type=='plev':
             level_constraint=iris.Constraint(Level=self.level)
-        elif self.source in ['ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_w','trmm3b42v7_sfc_3h','tropflux_sfc_d']:
+        elif self.source in ['ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h','sstrey_sfc_7d','trmm3b42v7_sfc_3h','tropflux_sfc_d']:
             level_constraint=False
         else:
             raise UserWarning('Set an instruction for level_constraint.')
+        #
         # Set raw_name of variable in raw input data
         self.raw_name=self.name
         if self.data_source in ['ncepncar',]:
@@ -721,9 +809,13 @@ class DataConverter(object):
                 self.raw_name=self.var_name
         elif self.data_source in ['olrinterp',]:
             self.raw_name='olr'
+        elif self.data_source in ['sg579m031oi01','sg534m031oi01','sg532m031oi01','sg620m031oi01','sg613m031oi01',]:
+            if self.var_name=='tsc':
+                self.raw_name='cons_temp'
         elif self.data_source in ['tropflux',]:
             if self.var_name=='lhfd':
                 self.raw_name='lhf'
+        #
         # Load cube
         with iris.FUTURE.context(netcdf_promote=True):
             self.cube=iris.load_cube(self.filein1,self.raw_name,callback=clean_callback)
@@ -734,6 +826,7 @@ class DataConverter(object):
                 self.cube=self.cube.extract(level_constraint & time_constraint)
             else:
                 self.cube=self.cube.extract(time_constraint)
+        #
         # Apply mask if appropriate
         if self.file_mask:
             print('Applying mask')
@@ -767,6 +860,35 @@ class DataConverter(object):
         self.cube.standard_name=self.name
         self.cube.coord('time').bounds=None
         #
+        # BoBBLE OI glider data from Ben Webber
+        if self.data_source[:2]=='sg' and self.data_source[6:]=='031oi01':
+            # Missing data is set to zero.  Change to 1e20 and mask
+            missing_value=1e20
+            x1=np.where(np.equal(self.cube.data,0),missing_value,self.cube.data)
+            self.cube.data=np.ma.masked_equal(x1,missing_value)
+            ## Reset time, as original hourly data time axis was in days
+            ## since ..., but values were only stored to 2 dp.
+            ## As 1 hour = 0.041666667 days, significant round off error
+            ## New time axis is in hours since first time
+            #tc=self.cube.coord('time')
+            #time0_val=tc.points[0]
+            #if time0_val!=int(time0_val):
+            #    raise UserWarning('Need a integer value to start with.')
+            #time0_datetime=tc.units.num2date(time0_val)
+            #new_time_units='hours since '+str(time0_datetime)
+            #ntime=tc.points.shape[0]
+            #print('ntime : {0!s}'.format(ntime))
+            #print('time0_datetime : {0!s}'.format(time0_datetime))
+            #new_time_vals=np.arange(ntime)
+            #new_time_coord=iris.coords.DimCoord(new_time_vals,standard_name='time',units=new_time_units)
+            #print('new_time_coord : {0!s}'.format(new_time_coord))
+            #self.cube.remove_coord('time')
+            #self.cube.add_dim_coord(new_time_coord,0)
+            if self.var_name=='tsc':
+                self.cube.units='degC'
+            if self.var_name=='lon':
+                self.cube.units='degree_east'
+        #
         # Reynolds SST weekly data.
         # Time stamp is at beginning of week.
         # Change so it is at the end of the week, by adding 3 (days).
@@ -774,7 +896,7 @@ class DataConverter(object):
         # year, eg 1982-12-29 is changed to 1984-01-01.  This should not
         # matter as the next step with this data is to linearly interpolate
         # to daily data, which uses all data, not the individual yearly files.
-        if self.source=='sstrey_sfc_w':
+        if self.source=='sstrey_sfc_7d':
             tcoord=self.cube.coord('time')
             time_units=tcoord.units
             if 'day' not in time_units.name:
@@ -961,6 +1083,7 @@ class TimeDomStats(object):
             cube_event_means.append(x3)
         self.cube_event_means=cube_event_means
         self.cube_event_ntimes=cube_event_ntimes
+        self.units=x2.units
 
     def f_time_mean(self):
         """Calculate time mean over time domain and save to netcdf.
@@ -986,12 +1109,23 @@ class TimeDomStats(object):
         # Calculate mean
         time_mean=x1/float(ntime_total)
         time_mean.standard_name=self.name
+        time_mean.units=self.units
+        # Add cell method to describe time mean
+        cm=iris.coords.CellMethod('point','time',comments='mean over time domain '+self.tdomain.idx)
+        time_mean.add_cell_method(cm)
         self.time_mean=time_mean
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.time_mean,self.fileout_mean)
 
-    def f_diurnal_cycle(self):
+    def f_diurnal_cycle(self,double=True):
         """Calculate mean diurnal cycle.
+
+        Time axis for mean diurnal cycle runs for one day (1 Jan in
+        year 1, ie 01-01-01).
+
+        if double is True, create a copy of the diurnal cycle for a
+        second day, ie 2 Jan year 1.  This is to help in plotting
+        later.
 
         Create attribute:
 
@@ -1077,6 +1211,29 @@ class TimeDomStats(object):
         x10.add_cell_method(cm)
         # Create mean_dc attribute
         self.mean_dc=x10
+        #
+        if double:
+            print('Create a double diurnal cycle (ie two identical days)')
+            # Create a new time axis for 2 Jan year 1
+            times_datetime=[datetime.datetime(1,1,2,xx.hour,xx.minute,xx.second) for xx in x2]
+            times_val=[time_units.date2num(xx) for xx in times_datetime]
+            time_coord=iris.coords.DimCoord(times_val,standard_name='time',units=time_units)
+            print('times_datetime: {0!s}'.format(times_datetime))
+            print('times_val: {0!s}'.format(times_val))
+            print('time_coord: {0!s}'.format(time_coord))
+            # Create copy of cube of diurnal cycle
+            x11=self.mean_dc.copy()
+            # Apply new time axis
+            x11.remove_coord('time')
+            x11.add_dim_coord(time_coord,0)
+            # Create a cube list of the two diurnal cycles and concatenate
+            x12=iris.cube.CubeList([self.mean_dc,x11])
+            x13=x12.concatenate_cube()
+            # Overwrite mean_dc attribute
+            #pdb.set_trace()
+            self.mean_dc=x13
+            
+        # Save diurnal cycle
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.mean_dc,self.fileout_dc)
             
@@ -1144,7 +1301,6 @@ class TimeFilter(object):
         source_info(self)
         self.filepre=descriptor['filepre']
         self.filein1=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
-        #self.data_in=iris.load(self.filein1,self.name)
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.filein1,self.name)
         xx=self.source.split('_')
@@ -1309,7 +1465,8 @@ class TimeAverage(object):
         self.source=self.source2
         source_info(self)
         self.filein1=os.path.join(self.basedir,self.source1,'std',self.var_name+'_'+str(self.level)+'_'+self.wildcard+'.nc')
-        self.data_in=iris.load(self.filein1,self.name)
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_in=iris.load(self.filein1,self.name)
         if self.verbose:
             print(self)        
 
@@ -1396,7 +1553,7 @@ class Interpolate(object):
 
     Selected attributes:
 
-    self.source1 : input source, e.g., sstrey_sfc_w weekly data.
+    self.source1 : input source, e.g., sstrey_sfc_7d weekly data.
 
     self.source2 : output source, e.g., sstrey_sfc_d daily data.  The
     data_source and level_type parts of self.source1 and self.source 2
@@ -1853,6 +2010,7 @@ class AnnualCycle(object):
         self.level=descriptor['level']
         self.year1=descriptor['year1']
         self.year2=descriptor['year2']
+        self.time1=descriptor['time1']
         self.file_data_in=os.path.join(self.basedir,self.source,'std',
               self.var_name+'_'+str(self.level)+'_'+self.wildcard+'.nc')
         self.file_anncycle_raw=os.path.join(self.basedir,self.source,
@@ -1867,10 +2025,11 @@ class AnnualCycle(object):
         self.nharm=descriptor['nharm']
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.file_data_in,self.name)
-        # Get first time in input data
-        x1=self.data_in[0].coord('time')[0]
-        x2=x1.cell(0)[0]
-        self.time1=x1.units.num2date(x2)
+        # Get first time in input data if self.time1 not externally set
+        if not self.time1:
+            x1=self.data_in[0].coord('time')[0]
+            x2=x1.cell(0)[0]
+            self.time1=x1.units.num2date(x2)
         # Get last time in input data
         x1=self.data_in[-1].coord('time')[-1]
         x2=x1.cell(0)[0]
@@ -1886,6 +2045,8 @@ class AnnualCycle(object):
             ss=h1a+'AnnualCycle instance \n'+\
                 'year1: {0.year1!s} \n'+\
                 'year2: {0.year2!s} \n'+\
+                'time1: {0.time1!s} \n'+\
+                'time2: {0.time2!s} \n'+\
                 'nharm: {0.nharm!s} \n'+\
                 'file_data_in: {0.file_data_in!s} \n'+\
                 'data_in: {0.data_in!s} \n'+\
@@ -1913,7 +2074,7 @@ class AnnualCycle(object):
         Create data_anncycle_raw attribute.
         
         """
-        raise UserWarning('Use f_anncycle_raw instead')
+        raise DeprecationWarning('Use f_anncycle_raw instead')
         if self.frequency!='d':
             raise UserWarning('Annual cycle presently only coded up for daily data.')
         # Set first day as 1 Jan year 1 (time coord will be relative to this)
@@ -1966,6 +2127,11 @@ class AnnualCycle(object):
     def f_anncycle_raw(self):
         """Create raw annual cycle and write to file.
 
+        The raw annual cycle consists of a value for each time (e.g.,
+        day) of the year by averaging over all years, e.g., creates a
+        value for 1 Jan by averaging over all the 1 Jan days from all
+        the year.
+        
         This will be assigned to year 1, i.e. AD 1.  NB year 1 is not
         a leap year.
 
@@ -2336,4 +2502,296 @@ class AnnualCycle(object):
         """
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_anncycle_rm=iris.load(self.file_anncycle_rm,self.name)
+        
+#==========================================================================
+
+class GliderMission(object):
+    
+    """Analyse a glider mission
+
+    Called from, e.g., glider_interp_lon.py
+
+    Selected attributes:
+
+    self.mission : integer id for mission
+
+    self.gliderids : list of integer glider ids for mission
+
+    self.time1 : datetime.datetime object for 00 UTC on day of
+    deployment of first glider in mission
+
+    self.time2 : datetime.datetime object for 00 UTC on day after
+    recovery of last glider in mission
+
+    """
+
+    def __init__(self,descriptor,verbose=False):
+        self.descriptor=descriptor
+        self.verbose=verbose
+        self.basedir=descriptor['basedir']
+        self.mission=descriptor['mission']
+        self.source_wildcard=descriptor['source_wildcard']
+        self.var_name=descriptor['var_name']
+        self.name=var_name2standard_name[self.var_name]
+        if self.mission==31:
+            self.gliderids=[579,534,532,620,613]
+            self.time1=datetime.datetime(2016,6,30)
+            self.time2=datetime.datetime(2016,7,21)
+        else:
+            raise UserWarning('Invalid mission')
+        # self.gliders is a dictionary of glider objects
+        self.gliders={}
+        for gliderid in self.gliderids:
+            self.gliders[gliderid]=Glider(gliderid,self.descriptor,verbose=self.verbose)
+        self.data_oi_pad_all={}
+        self.data_oi_interp_lon={}
+        if self.verbose:
+            print(self)        
+
+    def __repr__(self):
+        return 'GliderMission({0.descriptor!r},verbose={0.verbose!r})'.format(self)
+
+    def __str__(self):
+        if self.verbose==2:
+            ss=h1a+'GliderMission instance \n'+\
+                'mission: {0.mission!s} \n'+\
+                'gliderids: {0.gliderids!s} \n'+\
+                'source_wildcard: {0.source_wildcard!s} \n'+\
+                'time1: {0.time1!s} \n'+\
+                'time2: {0.time2!s} \n'+h1b
+            return(ss.format(self))
+        else:
+            return 'GliderMission instance'
+
+    def f_interp_oi_lon(self,lon1,lon2,delta_lon):
+        """Interpolate padded OI data from individual gliders in longitude."""
+
+        x1a=iris.cube.CubeList([]) # var_name
+        x2a=iris.cube.CubeList([]) # longitude
+        kount=0
+        for gliderid in self.gliderids:
+            print('gliderid: {0!s}'.format(gliderid))
+            # Read and pad OI var_name
+            self.gliders[gliderid].f_read_oi(self.var_name,verbose=False)
+            self.gliders[gliderid].f_oi_pad(self.var_name,self.time1,self.time2,verbose=False)
+            # Read and pad OI longitude
+            self.gliders[gliderid].f_read_oi('lon',verbose=False)
+            self.gliders[gliderid].f_oi_pad('lon',self.time1,self.time2,verbose=False)
+            # Combine padded OI data from all gliders into single iris cube
+            glider_coord=iris.coords.DimCoord(kount,var_name='glider')
+            # Variable
+            x1b=self.gliders[gliderid].data_oi_pad[self.var_name]
+            x1b.add_aux_coord(glider_coord)
+            x1b.data.fill_value=1e20 # Reset or merge_cube will fail
+            x1a.append(x1b)
+            # Longitude
+            x2b=self.gliders[gliderid].data_oi_pad['lon']
+            x2b.add_aux_coord(glider_coord)
+            x2b.data.fill_value=1e20 # Reset or merge_cube will fail
+            x2a.append(x2b)
+            kount+=1
+        # Merge cube list of individual gliders to cube of all gliders
+        x1c=x1a.merge_cube()
+        x2c=x2a.merge_cube()
+        # Create data_oi_pad_all attribute dictionary entries
+        self.data_oi_pad_all[self.var_name]=x1c
+        self.data_oi_pad_all['lon']=x2c
+        # Create longitude axis to interpolate onto
+        delta=1e-6
+        xnew=np.arange(lon1,lon2+delta,delta_lon)
+        print('xnew: {0!s}'.format(xnew))
+        nlon=len(xnew)
+        lon_coord=iris.coords.DimCoord(xnew,standard_name='longitude',var_name='longitude',units='degree_east')
+        print('lon_coord: {0!s}'.format(lon_coord))
+        # Interpolation
+        xx=self.data_oi_pad_all['lon'].data
+        yy=self.data_oi_pad_all[self.var_name].data
+        # As the longitudes (x values) of each glider are different at each
+        # time, depth etc, have to do a separate interpolation over longitude
+        # at each time, depth etc.  Ugly nested loops
+        if len(yy.shape)!=3:
+            raise ValueError('Need some more code if not 3-d data')
+        # Create empty new 3-d array to fill with interpolated values
+        shape=(nlon,)+yy.shape[1:]
+        ndim1=shape[1]
+        ndim2=shape[2]
+        print('nlon,ndim1,ndim2: {0!s},{1!s},{2!s}'.format(nlon,ndim1,ndim2))
+        x3=np.zeros(shape)
+        # Loop over other dimensions and fill x3 with interpolated values
+        missing_value=1e20
+        nglider=len(self.gliderids)
+        for idim1 in range(ndim1):
+            print('idim1: {0!s}'.format(idim1))
+            for idim2 in range(ndim2):
+                xx1=xx[:,idim1,idim2]
+                yy1=yy[:,idim1,idim2]
+                # Get rid of masked data
+                xxc=[xx1.data[ii] for ii in range(nglider) if not xx1.mask[ii]]
+                yyc=[yy1.data[ii] for ii in range(nglider) if not xx1.mask[ii]]
+                n_data_points=len(xxc)
+                #print('idim1,idim2,n_data_points: {0!s},{1!s},{2!s}'.format(idim1,idim2,n_data_points))
+                #print('xxc: {0!s}'.format(xxc))
+                #print('yyc: {0!s}'.format(yyc))
+                if n_data_points>1:
+                    # Interpolate
+                    ynew=np.interp(xnew,xxc,yyc,left=missing_value,right=missing_value)
+                elif n_data_points==1:
+                    # Only 1 data point.  
+                    # Take the data at the 1 point and
+                    # extend it over neighbouring points.
+                    xspread=3*delta_lon
+                    ynew=np.where(abs(xxc[0]-xnew)<xspread,yyc[0],missing_value)
+                else:
+                    # Zero data points.
+                    # Fill ynew with missing values
+                    ynew=missing_value*np.ones((nlon,))
+                #print('ynew: {0!s}'.format(ynew))
+                x3[:,idim1,idim2]=ynew
+        # Create iris cube
+        oldcube=self.data_oi_pad_all[self.var_name]
+        # Create a list of two-lists, each of form [dim_coord,index]
+        dim_coords=[[lon_coord,0]]
+        kdim=1
+        for xx in oldcube.dim_coords[1:]:
+            dim_coords.append([xx,kdim])
+            kdim+=1
+        x4=iris.cube.Cube(conv_float32(x3),standard_name=oldcube.standard_name,var_name=oldcube.var_name,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
+        # Mask missing values
+        x4.data=np.ma.masked_greater(x4.data,missing_value/10)
+        # Create data_oi_interp_lon attribute dictionary entry
+        self.data_oi_interp_lon[self.var_name]=x4
+        # Save interpolated data
+        source_out=self.source_wildcard.replace('???','all')
+        #
+        ########################################################
+        # Need to sort out code with '2016' below to handle year properly
+        # in gliderMission and Glider classes
+        ########################################################
+        #
+        fileout=os.path.join(self.basedir,source_out,'std',self.var_name+'_all_2016.nc')
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.data_oi_interp_lon[self.var_name],fileout)
+        
+        
+#==========================================================================
+
+class Glider(object):
+
+    """Glider object."""
+
+    def __init__(self,gliderid,descriptor,verbose=False):
+        self.descriptor=descriptor
+        self.gliderid=gliderid
+        self.basedir=descriptor['basedir']
+        self.mission=descriptor['mission']
+        self.source_wildcard=descriptor['source_wildcard']
+        self.data_oi={}
+        self.data_oi_pad={}
+        self.verbose=verbose
+
+    def __repr__(self):
+        return 'Glider ({0.gliderid!r},verbose={0.verbose!r})'.format(self)
+
+    def __str__(self):
+        if self.verbose==2:
+            ss=h1a+'Glider instance \n'+\
+                'gliderid: {0.gliderid!s} \n'+\
+                'mission: {0.mission!s} \n'+\
+                'source_wildcard: {0.source_wildcard!s} \n'+h1b
+            return(ss.format(self))
+        else:
+            return 'Glider instance'
+
+    def f_read_oi(self,var_name,verbose=False):
+        """Read OI field for individual glider.
+
+        Create attribute data_oi.
+        """
+        name=var_name2standard_name[var_name]
+        self.source=self.source_wildcard.replace('???',str(self.gliderid))
+        file1=os.path.join(self.basedir,self.source,'std',var_name+'_all_????.nc')
+        with iris.FUTURE.context(netcdf_promote=True):
+            x1=iris.load(file1,name)
+        x2=x1.concatenate_cube()
+        # Set data_oi attribute dictionary entry
+        self.data_oi[var_name]=x2
+        if verbose:
+            print('source {0.source!s}'.format(self))
+
+    def f_oi_pad(self,var_name,time1,time2,verbose=False):
+        """Pad OI data with missing values back to time1 and forward to time2.
+
+        Create attribute data_oi_pad.
+        """
+        name=var_name2standard_name[var_name]
+        source_info(self)
+        # Get first and last time of data: time1a,time2a
+        tcoord=self.data_oi[var_name].coord('time')
+        time_units=tcoord.units
+        time1a=tcoord.units.num2date(tcoord.points[0])
+        time2a=tcoord.units.num2date(tcoord.points[-1])
+        time1a_val=time_units.date2num(time1a)
+        time2a_val=time_units.date2num(time2a)
+        if verbose:
+            print('time1a,time2a: {0!s}, {1!s}'.format(time1a,time2a))
+            print('time1a_val,time2a_val: {0!s}, {1!s}'.format(time1a_val,time2a_val))
+        # Process times to pad to: time1,time2
+        time1_val=time_units.date2num(time1)
+        time2_val=time_units.date2num(time2)
+        if verbose:
+            print('time1,time2: {0!s}, {1!s}'.format(time1,time2))
+            print('time1_val,time2_val: {0!s}, {1!s}'.format(time1_val,time2_val))
+        if time1>time1a or time2<time2a:
+            raise ValueError('time1 or time2 not set correctly')
+        # Find index of time coordinate
+        missing_value=1e20
+        kount=0
+        for dimc in self.data_oi[var_name].dim_coords:
+            if dimc.standard_name=='time':
+                tcoord_index=kount
+                kount+=1
+        if verbose:
+            print('tcoord_index: {0!s}'.format(tcoord_index))
+        #
+        # Create padding array with missing values between time1 and time1a
+        ntime=int((time1a-time1)/self.timedelta)
+        shape=self.data_oi[var_name].shape
+        shape1=shape[:tcoord_index]+(ntime,)+shape[tcoord_index+1:]
+        if verbose:
+            print('ntime: {0!s}'.format(ntime))
+            print('shape: {0!s}'.format(shape))
+            print('shape1: {0!s}'.format(shape1))
+        x1=missing_value*np.ones(shape1)
+        tcoord1_vals=[time_units.date2num(time1+ii*self.timedelta) for ii in range(ntime)]
+        tcoord1_vals=conv_float32(np.array(tcoord1_vals))
+        tcoord1=iris.coords.DimCoord(tcoord1_vals,standard_name='time',var_name='time',units=time_units)        
+        if verbose:
+            print('tcoord1_vals: {0!s}'.format(tcoord1_vals))
+            print('tcoord1: {0!s}'.format(tcoord1))
+        pad_before=create_cube(conv_float32(x1),self.data_oi[var_name],new_axis=tcoord1)
+        #
+        # Create padding array with missing values between time2a and time2'
+        ntime=int((time2-time2a)/self.timedelta)
+        shape=self.data_oi[var_name].shape
+        shape1=shape[:tcoord_index]+(ntime,)+shape[tcoord_index+1:]
+        if verbose:
+            print('ntime: {0!s}'.format(ntime))
+            print('shape: {0!s}'.format(shape))
+            print('shape1: {0!s}'.format(shape1))
+        x1=missing_value*np.ones(shape1)
+        tcoord1_vals=[time_units.date2num(time2a+(ii+1)*self.timedelta) for ii in range(ntime)]
+        tcoord1_vals=conv_float32(np.array(tcoord1_vals))
+        tcoord1=iris.coords.DimCoord(tcoord1_vals,standard_name='time',var_name='time',units=time_units)        
+        if verbose:
+            print('tcoord1_vals: {0!s}'.format(tcoord1_vals))
+            print('tcoord1: {0!s}'.format(tcoord1))
+        pad_after=create_cube(conv_float32(x1),self.data_oi[var_name],new_axis=tcoord1)
+        #
+        # Create cube list of padding before, data, padding after
+        x4=iris.cube.CubeList([pad_before,self.data_oi[var_name],pad_after])
+        x5=x4.concatenate_cube()
+        # Mask missing values
+        x5.data=np.ma.masked_greater(x5.data,missing_value/10)
+        # Set data_oi_pad attribute dictionary entry
+        self.data_oi_pad[var_name]=x5
         
