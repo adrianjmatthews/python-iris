@@ -66,7 +66,10 @@ var_name2standard_name={
     'psfc':'surface_air_pressure',
     'psi':'atmosphere_horizontal_streamfunction',
     'pv':'ertel_potential_vorticity',
+    'sa':'sea_water_absolute_salinity',
+    'shum':'specific_humidity',
     'sst':'sea_surface_temperature',
+    'swr':'surface_downwelling_shortwave_flux',
     'ta':'air_temperature',
     'tsc':'sea_water_conservative_temperature',
     'uwnd':'eastward_wind',
@@ -103,11 +106,11 @@ def source_info(aa):
     aa.level_type=xx[1]
     aa.frequency=xx[2]
     # Check data_source attribute is valid
-    valid_data_sources=['erainterim','ncepdoe','ncepncar','olrcdr','olrinterp','sg579m031oi01','sg534m031oi01','sg532m031oi01','sg620m031oi01','sg613m031oi01','sstrey','trmm3b42v7','tropflux']
+    valid_data_sources=['erainterim','ncepdoe','ncepncar','olrcdr','olrinterp','sg579m031oi01','sg534m031oi01','sg532m031oi01','sg620m031oi01','sg613m031oi01','sgallm031oi01','sstrey','trmm3b42v7','tropflux']
     if aa.data_source not in valid_data_sources:
         raise UserWarning('data_source {0.data_source!s} not vaild'.format(aa))
     # Set outfile_frequency attribute depending on source information
-    if aa.source in ['erainterim_plev_6h','ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_7d','sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h','sstrey_sfc_d','tropflux_sfc_d']:
+    if aa.source in ['erainterim_plev_6h','ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_7d','sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h','sgallm031oi01_zlev_h','sstrey_sfc_d','tropflux_sfc_d']:
         aa.outfile_frequency='year'
         aa.wildcard='????'
     elif aa.source in ['trmm3b42v7_sfc_3h','trmm3b42v7_sfc_d']:
@@ -401,7 +404,9 @@ class TimeDomain(object):
     For historical reasons (from using the cdat module) the format of
     the ascii file is that from a print cdtime.comptime object,
     e.g. for 'jul9899':
-    
+
+    # Optional descriptive comment line(s) beginning with '#'
+    # July 1998, 1999
     1998-07-01 00:00:0.0, 1998-07-31 23:59:0.0
     1999-07-01 00:00:0.0, 1999-07-31 23:59:0.0
 
@@ -465,14 +470,19 @@ class TimeDomain(object):
     def read_ascii(self):
         """Read the ascii time domain file.
 
-        Create a lines attribute.
+        Discard any comments (lines beginning with '#')
+
+        Create lines and comments attribute.
         """
         file1=open(self.filename)
-        self.lines=file1.readlines()
+        lines=file1.readlines()
         file1.close()
+        self.comments=[xx for xx in lines if xx[0]=='#']
+        self.lines=[xx for xx in lines if xx[0]!='#']
         if self.verbose:
-            ss='read_ascii:  {0.idx!s}: Created attribute "lines". \n'
+            ss='read_ascii:  {0.idx!s}: Created attributes "comments", "lines". \n'
             if self.verbose==2:
+                ss+='   comments: {0.comments!s} \n'
                 ss+='   lines: {0.lines!s} \n'
             print(ss.format(self))
 
@@ -812,6 +822,8 @@ class DataConverter(object):
         elif self.data_source in ['sg579m031oi01','sg534m031oi01','sg532m031oi01','sg620m031oi01','sg613m031oi01',]:
             if self.var_name=='tsc':
                 self.raw_name='cons_temp'
+            elif self.var_name=='sa':
+                self.raw_name='abs_salin'
         elif self.data_source in ['tropflux',]:
             if self.var_name=='lhfd':
                 self.raw_name='lhf'
@@ -886,7 +898,7 @@ class DataConverter(object):
             #self.cube.add_dim_coord(new_time_coord,0)
             if self.var_name=='tsc':
                 self.cube.units='degC'
-            if self.var_name=='lon':
+            elif self.var_name=='lon':
                 self.cube.units='degree_east'
         #
         # Reynolds SST weekly data.
