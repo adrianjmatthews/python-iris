@@ -62,6 +62,7 @@ var_name2standard_name={
     'mslp':'air_pressure_at_sea_level',
     'olr':'toa_outgoing_longwave_flux',
     'omega':'lagrangian_tendency_of_air_pressure',
+    'mltt':'ocean_mixed_layer_thickness_defined_by_temperature',
     'ppt':'lwe_precipitation_rate',
     'psfc':'surface_air_pressure',
     'psi':'atmosphere_horizontal_streamfunction',
@@ -1035,10 +1036,6 @@ class TimeDomStats(object):
         self.filein1=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.filein1,self.name)
-        if 'ntimemin' in descriptor:
-            self.ntimemin=descriptor['ntimemin']
-        else:
-            self.ntimemin=5
         self.tdomain=TimeDomain(self.tdomainid,verbose=self.verbose)
         self.tdomain.read_ascii()
         self.tdomain.ascii2datetime()
@@ -1058,7 +1055,6 @@ class TimeDomStats(object):
                 'level: {0.level!s} \n'+\
                 'source: {0.source!s} \n'+\
                 'tdomainid: {0.tdomainid!s} \n'+\
-                'ntimemin:{0.ntimemin!s} \n'+\
                 'data_in: {0.data_in!s} \n'+\
                 'filein1: {0.filein1!s} \n'+\
                 'fileout_mean: {0.fileout_mean!s} \n'+\
@@ -1119,13 +1115,14 @@ class TimeDomStats(object):
                 x1+=self.cube_event_means[ievent]*float(ntime)
                 ntime_total+=ntime
         # Calculate mean
-        time_mean=x1/float(ntime_total)
+        time_mean=x1/ntime_total
         time_mean.standard_name=self.name
         time_mean.units=self.units
         # Add cell method to describe time mean
         cm=iris.coords.CellMethod('point','time',comments='mean over time domain '+self.tdomain.idx)
         time_mean.add_cell_method(cm)
         self.time_mean=time_mean
+        pdb.set_trace()
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.time_mean,self.fileout_mean)
 
@@ -1700,15 +1697,19 @@ class Hovmoller(object):
     def __init__(self,descriptor,verbose=False):
         self.descriptor=descriptor
         self.verbose=verbose
-        self.file_data_in=descriptor['file_data_in']
-        self.file_data_hov=descriptor['file_data_hov']
+        self.basedir=descriptor['basedir']
+        self.source=descriptor['source']
         self.var_name=descriptor['var_name']
         self.name=var_name2standard_name[self.var_name]
-        self.source=descriptor['source']
         source_info(self)
+        self.level=descriptor['level']
+        self.filepre=descriptor['filepre']
         self.band_name=descriptor['band_name']
         self.band_val1=descriptor['band_val1']
         self.band_val2=descriptor['band_val2']
+        self.file_data_in=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
+        self.strhov='_hov_'+self.band_name[:3]+'_'+str(self.band_val1)+'_'+str(self.band_val2)
+        self.file_data_hov=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+self.strhov+'_'+self.wildcard+'.nc')
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.file_data_in,self.name)
         if self.verbose:
@@ -1739,6 +1740,7 @@ class Hovmoller(object):
         """
         # Extract input data for current time block, and 
         # for dimension band_name, between band_val1 and band_val1
+        self.time1,self.time2=block_times(self,verbose=self.verbose)
         time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
         if self.band_name=='latitude':
             band_constraint=iris.Constraint(latitude=lambda cell: self.band_val1 <=cell<= self.band_val2)
@@ -2807,3 +2809,186 @@ class Glider(object):
         # Set data_oi_pad attribute dictionary entry
         self.data_oi_pad[var_name]=x5
         
+#==========================================================================
+
+class CubeDiagnostics(object):
+
+    """CubeDiagnostics object.
+
+    An object to calculate physical diagnostics of data, e.g.,
+    calculate the mixed layer depth using a particular method, from a
+    cube of conservative temperature.
+
+    NB There are no generic diagnostics here, such as calculation of
+    the x-derivative (which could be applied to a cube of any
+    spatially varying quantity).  Instead, reserve this class to
+    contain methods that only work on specific physical quantities,
+    such as the above example.
+
+    Other examples might be calculating density from pressure and
+    temperature using the ideal gas law.
+
+    An instance of the class can have attributes such as self.tsc
+    (conservative_temperature), self.rho (air_density), etc.  These
+    will be iris cubes.  Each iris cube should have the same dimensions.
+    
+    After creating an instance of the class, call method f_read_data()
+    to lazy read whatever variables (e.g., 'tsc', or 'rho' and 'ta')
+    will be needed later.
+
+    Then loop over relevant time blocks in main programme, and call
+    desired method from this class, e.g., f_mld().  These methods,
+    e.g., f_mld() then read and set attributes named after the
+    variable name, e.g., self.tsc is an iris cube of tsc, and
+    calculate diagnostics, e.g., self.mld is an iris cube of mixed
+    layer depth.
+
+    It is anticipated that this class will grow over time and will
+    eventually be very large, adding more methods as needed.
+
+    """
+
+    def __init__(self,descriptor,verbose=False):
+        self.descriptor=descriptor
+        self.verbose=verbose
+        self.basedir=descriptor['basedir']
+        self.source=descriptor['source']
+        source_info(self)
+        self.level=descriptor['level']
+        # Empty dictionaries to fill later
+        self.filein={}
+        self.data_in={}
+        if self.verbose:
+            print(self)        
+
+    def __repr__(self):
+        return 'CubeDiagnostics (verbose={0.verbose!r})'.format(self)
+
+    def __str__(self):
+        if self.verbose==2:
+            ss=h1a+'CubeDiagnostics instance \n'+\
+                'source: {0.source!s} \n'+h1b
+            return(ss.format(self))
+        else:
+            return 'CubeDiagnostics instance'
+
+    def f_read_data(self,var_name):
+        """Lazy read cube(s) of var_name for current time block.
+
+        Add entry to the dictionary attributes self.filein and
+        self.data_in.
+        """
+        name=var_name2standard_name[var_name]
+        self.filein[var_name]=os.path.join(self.basedir,self.source,'std',var_name+'_'+str(self.level)+'_'+self.wildcard+'.nc')
+        with iris.FUTURE.context(netcdf_promote=True):
+            self.data_in[var_name]=iris.load(self.filein[var_name],name)
+        if self.verbose:
+            ss=h2a+'f_read_data \n'+\
+                'var_name: {0!s} \n'+\
+                'filein: {1.filein!s} \n'+\
+                'data_in: {1.data_in!s} \n'+h2b
+            print(ss.format(var_name,self))
+            
+
+    def f_mld(self,method=1,deltatsc=1.0):
+        """Calculate mixed layer depth."""
+        # Read in tsc for current time block and assign to tsc attribute
+        self.time1,self.time2=block_times(self,verbose=self.verbose)
+        time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x1=self.data_in['tsc'].extract(time_constraint)
+        self.tsc=x1.concatenate_cube()
+        # Make a copy of tsc and work on this copy
+        tsc=self.tsc.copy()
+        # Check that tsc has a depth axis
+        dim_coord_names=[xx.var_name for xx in tsc.dim_coords]
+        if 'depth' not in dim_coord_names:
+            raise ValueError('depth must be a coordinate.')
+        # Transpose tsc cube such that depth is first axis
+        ndim=len(dim_coord_names)
+        indices=list(range(ndim))
+        depth_index=dim_coord_names.index('depth')
+        indices.pop(depth_index)
+        indices_new=[depth_index,]+indices
+        tsc.transpose(new_order=indices_new)
+        # If tsc has > 2 dimensions, reshape tsc data to 2-D (nz,ngrid) numpy array
+        shape1=tsc.shape
+        nz=shape1[0]
+        if ndim==1:
+            ngrid=None
+            tsc_data=tsc.data
+        elif ndim==2:
+            ngrid=shape1[1]
+            tsc_data=tsc.data
+        else:
+            ngrid=shape1[1]
+            for idim in range(2,ndim):
+                ngrid*=shape1[idim]
+            shape2=(nz,ngrid)
+            tsc_data=numpy.reshape(tsc.data,shape2)
+        print('ndim, shape1: {0!s}, {1!s}'.format(ndim,shape1))
+        print('nz, ngrid: {0!s}, {1!s}'.format(nz,ngrid))
+        #
+        if method==1:
+            # Extract 'surface temperature' as temperature at smallest depth.
+            lev_coord=self.tsc.coord('depth')
+            lowest_depth=lev_coord.points.min()
+            if lowest_depth>1:
+                raise UserWarning('Lowest depth needs to be less than 1 m for surface temperature')
+            lev_con=iris.Constraint(depth=lowest_depth)
+            tsfc=tsc.extract(lev_con)
+            # Create field of surface temperature minus deltatsc
+            tsc_star=tsfc.data-deltatsc
+            # Find the indices of z_a, the first depth at which the temperature
+            #   is less than T*
+            # z_b is then the depth immediately above this.
+            # T_a and T_b are the temperatures at these two depths.  They
+            #   bracket T*
+            indices_za=np.argmax(tsc_data<tsc_star,axis=0)
+            indices_zb=indices_za-1
+            tsc_a=tsc_data[indices_za,list(np.arange(ngrid))]
+            tsc_b=tsc_data[indices_zb,list(np.arange(ngrid))]
+            zz_a=lev_coord.points[indices_za]
+            zz_b=lev_coord.points[indices_zb]
+            # Linearly interpolate to find the depth z* at which the
+            #   temperature is T*
+            zz_star=(tsc_star*(zz_a-zz_b)-(tsc_b*zz_a-tsc_a*zz_b)) / (tsc_a-tsc_b)
+            if self.verbose:
+                ii=15
+                print('Sample data from first grid point')
+                print('deltatsc: {0!s}'.format(deltatsc))
+                print('ii: {0!s}'.format(ii))
+                print('tsfc.data[ii]: {0!s}'.format(tsfc.data[ii]))
+                print('tsc_star[ii]: {0!s}'.format(tsc_star[ii]))
+                print('indices_za[ii]: {0!s}'.format(indices_za[ii]))
+                print('indices_zb[ii]: {0!s}'.format(indices_zb[ii]))
+                print('tsc_a[ii]: {0!s}'.format(tsc_a[ii]))
+                print('tsc_b[ii]: {0!s}'.format(tsc_b[ii]))
+                print('zz_a[ii]: {0!s}'.format(zz_a[ii]))
+                print('zz_b[ii]: {0!s}'.format(zz_b[ii]))
+                print('zz_star[ii]: {0!s}'.format(zz_star[ii]))
+        else:
+            raise ValueError('Invalid method')
+        # Reshape zz_star to shape of original array (minus depth axis)
+        if ndim>=2:
+            zz_star.reshape(shape1[1:])
+        # Create a list of two-lists, each of form [dim_coord,index]
+        kdim=0
+        dim_coords=[]
+        for xx in tsc.dim_coords[1:]:
+            dim_coords.append([xx,kdim])
+            kdim+=1
+        # Create iris cube of zz_star
+        var_name='mltt'
+        standard_name='ocean_mixed_layer_thickness_defined_by_temperature'
+        self.mltt=iris.cube.Cube(zz_star,standard_name=standard_name,var_name=var_name,units=lev_coord.units,dim_coords_and_dims=dim_coords)
+        # Add cell method to describe calculation of mixed layer
+        cm=iris.coords.CellMethod('point','depth',comments='depth where temp is surface temp minus '+str(deltatsc))
+        self.mltt.add_cell_method(cm)
+        # Save cube
+        level=0
+        file_data_out=os.path.join(self.basedir,self.source,'std',var_name+'_'+str(level)+'_'+self.wildcard+'.nc')
+        fileout=replace_wildcard_with_time(self,file_data_out)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.mltt,fileout)
