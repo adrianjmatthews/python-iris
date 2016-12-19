@@ -2890,8 +2890,35 @@ class CubeDiagnostics(object):
             print(ss.format(var_name,self))
             
 
-    def f_mld(self,method=1,deltatsc=1.0):
-        """Calculate mixed layer depth."""
+    def f_mld(self,method=1,zzsfc=1.0,deltatsc=1.0):
+        """Calculate mixed layer depth.
+
+        Assumes tsc (conservative temperature) has already been
+        loaded, in self.data_in['tsc'].
+
+        Choose <method> to calculate mixed layer depth.
+
+        Method 1 (default).  For each profile, takes (conservative)
+        temperature at the "surface" depth. (default is <zzsfc> of 1.0
+        m).  Finds by linear interpolation the depth z* (zz_star) at which
+        the temperature is T* (tsc_star) = <deltatsc> (default of 1.0 degC)
+        below the temperature at <zzsfc>.  Saves this as attribute
+        self.mltt and saves to file.
+
+        Linear interpolation details.  For each profile, start from
+        the surface and go deeper to find z_a (zz_a), the depth at
+        which the temperature first falls below T*.  Temperature at
+        z_a is T_a (tsc_a).  The depth immediately before z_a is then
+        z_b (zz_b_, with temperature T_b (tsc_b).  T* must be in the
+        range T_a < T* < T_b, and the desired z* is in the range z_b <
+        z* < z_a.  From linear interpolation:
+
+        z* = T*(z_a - z_b) - (T_b*z_a - T_a*z_b)
+             ----------------------------------
+                       (T_a - T_b)
+                       
+        
+        """
         # Read in tsc for current time block and assign to tsc attribute
         self.time1,self.time2=block_times(self,verbose=self.verbose)
         time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
@@ -2930,14 +2957,14 @@ class CubeDiagnostics(object):
         print('nz, ngrid: {0!s}, {1!s}'.format(nz,ngrid))
         #
         if method==1:
+            # Method 1.
             # Extract 'surface temperature' as temperature at smallest depth.
             lev_coord=self.tsc.coord('depth')
-            lowest_depth=lev_coord.points.min()
-            if lowest_depth>1:
-                raise UserWarning('Lowest depth needs to be less than 1 m for surface temperature')
-            lev_con=iris.Constraint(depth=lowest_depth)
+            if lev_coord.points[0]>lev_coord.points[-1]:
+                raise UserWarning('Depth coordinate must be increasing, not decreasing.')
+            lev_con=iris.Constraint(depth=zzsfc)
             tsfc=tsc.extract(lev_con)
-            # Create field of surface temperature minus deltatsc
+            # Create field of T* = (surface temperature minus deltatsc)
             tsc_star=tsfc.data-deltatsc
             # Find the indices of z_a, the first depth at which the temperature
             #   is less than T*
@@ -2983,7 +3010,7 @@ class CubeDiagnostics(object):
         standard_name='ocean_mixed_layer_thickness_defined_by_temperature'
         self.mltt=iris.cube.Cube(zz_star,standard_name=standard_name,var_name=var_name,units=lev_coord.units,dim_coords_and_dims=dim_coords)
         # Add cell method to describe calculation of mixed layer
-        cm=iris.coords.CellMethod('point','depth',comments='depth where temp is surface temp minus '+str(deltatsc))
+        cm=iris.coords.CellMethod('point','depth',comments='depth where temp is temp (at depth '+str(zzsfc)+') minus '+str(deltatsc))
         self.mltt.add_cell_method(cm)
         # Save cube
         level=0
