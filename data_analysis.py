@@ -49,24 +49,41 @@ h1b='=============================================================>>>\n'
 h2a='<<<---------------------------\n'
 h2b='--------------------------->>>\n'
 
-# var_name, standard_name pairs
+# var_name, standard_name/long_name pairs
 # var_name is used for file names and as the variable name in netcdf files
-# standard_name is the string used by iris to extract a cube from a netcdf file
-var_name2standard_name={
+# When iris extracts a cube from a netcdf file with a given name string, it
+#   first looks for the standard_name, then long_name, then var_name.
+# However, there is a prescribed list of allowed standard_name values
+# 'tendency_of_atmosphere_relative_vorticity' (or any alternative) is not on
+# the list, and an error will result if this is set as a standard_name.
+# So do not use the standard_name attribute.
+# Use the long_name attribute instead throughout the scripts.
+# There is no restriction on long_name values.
+var_name2long_name={
     'chi':'atmosphere_horizontal_velocity_potential',
     'div':'divergence_of_wind',
+    'domegady_duwnddp':'meridional_derivative_of_lagrangian_tendency_of_air_pressure_times_pressure_derivative_of_zonal_wind',
+    'dvrtdt':'tendency_of_atmosphere_relative_vorticity',
     'ke':'specific_kinetic_energy_of_air',
     'lat':'latitude',
     'lhfd':'surface_downward_latent_heat_flux',
     'lon':'longitude',
     'mslp':'air_pressure_at_sea_level',
+    'mltt':'ocean_mixed_layer_thickness_defined_by_temperature',
+    'm_beta_vwnd':'minus_meridional_derivative_of_coriolis_parameter_times_northward_wind',
+    'm_domegadx_dvwnddp':'minus_zonal_derivative_of_lagrangian_tendency_of_air_pressure_times_pressure_derivative_of_northward_wind',
+    'm_ff_div':'minus_coriolis_parameter_times_atmosphere_relative_vorticity',
+    'm_omega_dvrtdp':'minus_lagrangian_tendency_of_air_pressure_times_pressure_derivative_of_atmosphere_relative_vorticity',
+    'm_uwnd_dvrtdx':'minus_eastward_wind_times_zonal_derivative_of_atmosphere_relative_vorticity',
+    'm_vwnd_dvrtdy':'minus_northward_wind_times_meridional_derivative_of_atmosphere_relative_vorticity',
+    'm_vrt_div':'minus_divergence_of_wind_times_atmosphere_relative_vorticity',
     'olr':'toa_outgoing_longwave_flux',
     'omega':'lagrangian_tendency_of_air_pressure',
-    'mltt':'ocean_mixed_layer_thickness_defined_by_temperature',
     'ppt':'lwe_precipitation_rate',
     'psfc':'surface_air_pressure',
     'psi':'atmosphere_horizontal_streamfunction',
     'pv':'ertel_potential_vorticity',
+    'res_dvrtdt':'residual_tendency_of_atmosphere_relative_vorticity',
     'sa':'sea_water_absolute_salinity',
     'shum':'specific_humidity',
     'sst':'sea_surface_temperature',
@@ -724,7 +741,7 @@ class DataConverter(object):
         self.source=descriptor['source']
         source_info(self)
         self.var_name=descriptor['var_name']
-        self.name=var_name2standard_name[self.var_name]
+        self.name=var_name2long_name[self.var_name]
         self.level=descriptor['level']
         self.basedir=descriptor['basedir']
         self.file_mask=False # Default value, overwrite if exists
@@ -815,7 +832,10 @@ class DataConverter(object):
         #
         # Set raw_name of variable in raw input data
         self.raw_name=self.name
-        if self.data_source in ['ncepncar',]:
+        if self.data_source in ['erainterim',]:
+            if self.var_name in['omega']:
+                self.raw_name='vertical_air_velocity_expressed_as_tendency_of_pressure'
+        elif self.data_source in ['ncepncar',]:
             if self.var_name in['uwnd','vwnd']:
                 self.raw_name=self.var_name
         elif self.data_source in ['olrinterp',]:
@@ -1027,7 +1047,7 @@ class TimeDomStats(object):
         self.verbose=verbose
         self.basedir=descriptor['basedir']
         self.var_name=descriptor['var_name']
-        self.name=var_name2standard_name[self.var_name]
+        self.name=var_name2long_name[self.var_name]
         self.level=descriptor['level']
         self.source=descriptor['source']
         source_info(self)
@@ -1074,7 +1094,7 @@ class TimeDomStats(object):
         if self.tdomain.type!='event':
             raise UserWarning("Warning: time domain type is '{0.tdomain.type}'.  It must be 'event'.".format(self))
         # Loop over events in time domain
-        cube_event_means=[]
+        cube_event_means=iris.cube.CubeList([])
         cube_event_ntimes=[]
         for eventc in self.tdomain.datetimes:
             time_beg=eventc[0]
@@ -1115,14 +1135,19 @@ class TimeDomStats(object):
                 x1+=self.cube_event_means[ievent]*float(ntime)
                 ntime_total+=ntime
         # Calculate mean
-        time_mean=x1/ntime_total
+        #time_mean=x1/ntime_total
+        # iris bug. Sometimes (eg glider tsc all) the line above fails.
+        # Work around.  Make a copy of iris cube, and just access data.
+        x2=x1.copy()
+        x2.data/=ntime_total
+        time_mean=x2
+        # Set attributes
         time_mean.standard_name=self.name
         time_mean.units=self.units
         # Add cell method to describe time mean
         cm=iris.coords.CellMethod('point','time',comments='mean over time domain '+self.tdomain.idx)
         time_mean.add_cell_method(cm)
         self.time_mean=time_mean
-        pdb.set_trace()
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.time_mean,self.fileout_mean)
 
@@ -1305,7 +1330,7 @@ class TimeFilter(object):
         self.file_weights=descriptor['file_weights']
         self.f_weights()
         self.var_name=descriptor['var_name']
-        self.name=var_name2standard_name[self.var_name]
+        self.name=var_name2long_name[self.var_name]
         self.source=descriptor['source']
         source_info(self)
         self.filepre=descriptor['filepre']
@@ -1467,7 +1492,7 @@ class TimeAverage(object):
         self.verbose=verbose
         self.basedir=descriptor['basedir']
         self.var_name=descriptor['var_name']
-        self.name=var_name2standard_name[self.var_name]
+        self.name=var_name2long_name[self.var_name]
         self.level=descriptor['level']
         self.source1=descriptor['source1']
         self.source2=descriptor['source2']
@@ -1576,7 +1601,7 @@ class Interpolate(object):
         self.file_data_in=descriptor['file_data_in']
         self.file_data_out=descriptor['file_data_out']
         self.var_name=descriptor['var_name']
-        self.name=var_name2standard_name[self.var_name]
+        self.name=var_name2long_name[self.var_name]
         self.source1=descriptor['source1']
         self.source2=descriptor['source2']
         self.source=self.source2
@@ -1700,7 +1725,7 @@ class Hovmoller(object):
         self.basedir=descriptor['basedir']
         self.source=descriptor['source']
         self.var_name=descriptor['var_name']
-        self.name=var_name2standard_name[self.var_name]
+        self.name=var_name2long_name[self.var_name]
         source_info(self)
         self.level=descriptor['level']
         self.filepre=descriptor['filepre']
@@ -1810,44 +1835,49 @@ class Wind(object):
     def __init__(self,descriptor,verbose=False):
         self.descriptor=descriptor
         self.verbose=verbose
-        self.file_data=descriptor['file_data']
+        self.basedir=descriptor['basedir']
+        self.source=descriptor['source']
+        source_info(self)
+        self.level=descriptor['level']
+        self.filepre=descriptor['filepre']
+        self.file_data=os.path.join(self.basedir,self.source,'std','VAR_NAME_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
         # uwnd
         self.var_name_uwnd='uwnd'
-        self.name_uwnd=var_name2standard_name[self.var_name_uwnd]
+        self.name_uwnd=var_name2long_name[self.var_name_uwnd]
         self.file_data_uwnd=self.file_data.replace('VAR_NAME',self.var_name_uwnd)
         # vwnd
         self.var_name_vwnd='vwnd'
-        self.name_vwnd=var_name2standard_name[self.var_name_vwnd]
+        self.name_vwnd=var_name2long_name[self.var_name_vwnd]
         self.file_data_vwnd=self.file_data.replace('VAR_NAME',self.var_name_vwnd)
         # psi
         self.flag_psi=descriptor['flag_psi']
         if self.flag_psi:
             self.var_name_psi='psi'
-            self.name_psi=var_name2standard_name[self.var_name_psi]
+            self.name_psi=var_name2long_name[self.var_name_psi]
             self.file_data_psi=self.file_data.replace('VAR_NAME',self.var_name_psi)
         # chi
         self.flag_chi=descriptor['flag_chi']
         if self.flag_chi:
             self.var_name_chi='chi'
-            self.name_chi=var_name2standard_name[self.var_name_chi]
+            self.name_chi=var_name2long_name[self.var_name_chi]
             self.file_data_chi=self.file_data.replace('VAR_NAME',self.var_name_chi)
         # vrt
         self.flag_vrt=descriptor['flag_vrt']
         if self.flag_vrt:
             self.var_name_vrt='vrt'
-            self.name_vrt=var_name2standard_name[self.var_name_vrt]
+            self.name_vrt=var_name2long_name[self.var_name_vrt]
             self.file_data_vrt=self.file_data.replace('VAR_NAME',self.var_name_vrt)
         # div
         self.flag_div=descriptor['flag_div']
         if self.flag_div:
             self.var_name_div='div'
-            self.name_div=var_name2standard_name[self.var_name_div]
+            self.name_div=var_name2long_name[self.var_name_div]
             self.file_data_div=self.file_data.replace('VAR_NAME',self.var_name_div)
         # wndspd
         self.flag_wndspd=descriptor['flag_wndspd']
         if self.flag_wndspd:
             self.var_name_wndspd='wndspd'
-            self.name_wndspd=var_name2standard_name[self.var_name_wndspd]
+            self.name_wndspd=var_name2long_name[self.var_name_wndspd]
             self.file_data_wndspd=self.file_data.replace('VAR_NAME',self.var_name_wndspd)
         #
         self.source=descriptor['source']
@@ -2020,7 +2050,7 @@ class AnnualCycle(object):
         source_info(self)
         self.basedir=descriptor['basedir']
         self.var_name=descriptor['var_name']
-        self.name=var_name2standard_name[self.var_name]
+        self.name=var_name2long_name[self.var_name]
         self.level=descriptor['level']
         self.year1=descriptor['year1']
         self.year2=descriptor['year2']
@@ -2546,7 +2576,7 @@ class GliderMission(object):
         self.mission=descriptor['mission']
         self.source_wildcard=descriptor['source_wildcard']
         self.var_name=descriptor['var_name']
-        self.name=var_name2standard_name[self.var_name]
+        self.name=var_name2long_name[self.var_name]
         if self.mission==31:
             self.gliderids=[579,534,532,620,613]
             self.time1=datetime.datetime(2016,6,30)
@@ -2721,7 +2751,7 @@ class Glider(object):
 
         Create attribute data_oi.
         """
-        name=var_name2standard_name[var_name]
+        name=var_name2long_name[var_name]
         self.source=self.source_wildcard.replace('???',str(self.gliderid))
         file1=os.path.join(self.basedir,self.source,'std',var_name+'_all_????.nc')
         with iris.FUTURE.context(netcdf_promote=True):
@@ -2737,7 +2767,7 @@ class Glider(object):
 
         Create attribute data_oi_pad.
         """
-        name=var_name2standard_name[var_name]
+        name=var_name2long_name[var_name]
         source_info(self)
         # Get first and last time of data: time1a,time2a
         tcoord=self.data_oi[var_name].coord('time')
@@ -2858,6 +2888,7 @@ class CubeDiagnostics(object):
         # Empty dictionaries to fill later
         self.filein={}
         self.data_in={}
+        self.file_data_out=os.path.join(self.basedir,self.source,'std','VAR_NAME_'+str(self.level)+'_'+self.wildcard+'.nc')
         if self.verbose:
             print(self)        
 
@@ -2867,21 +2898,22 @@ class CubeDiagnostics(object):
     def __str__(self):
         if self.verbose==2:
             ss=h1a+'CubeDiagnostics instance \n'+\
-                'source: {0.source!s} \n'+h1b
+                'source: {0.source!s} \n'+\
+                'file_data_out: {0.file_data_out!s} \n'+h1b
             return(ss.format(self))
         else:
             return 'CubeDiagnostics instance'
 
-    def f_read_data(self,var_name):
-        """Lazy read cube(s) of var_name for current time block.
+    def f_read_data(self,var_name,level):
+        """Lazy read cube(s) of var_name at level for current time block.
 
         Add entry to the dictionary attributes self.filein and
         self.data_in.
         """
-        name=var_name2standard_name[var_name]
-        self.filein[var_name]=os.path.join(self.basedir,self.source,'std',var_name+'_'+str(self.level)+'_'+self.wildcard+'.nc')
+        name=var_name2long_name[var_name]
+        self.filein[var_name+'_'+str(level)]=os.path.join(self.basedir,self.source,'std',var_name+'_'+str(level)+'_'+self.wildcard+'.nc')
         with iris.FUTURE.context(netcdf_promote=True):
-            self.data_in[var_name]=iris.load(self.filein[var_name],name)
+            self.data_in[var_name+'_'+str(level)]=iris.load(self.filein[var_name+'_'+str(level)],name)
         if self.verbose:
             ss=h2a+'f_read_data \n'+\
                 'var_name: {0!s} \n'+\
@@ -2894,7 +2926,7 @@ class CubeDiagnostics(object):
         """Calculate mixed layer depth.
 
         Assumes tsc (conservative temperature) has already been
-        loaded, in self.data_in['tsc'].
+        loaded, in self.data_in['tsc_all'].
 
         Choose <method> to calculate mixed layer depth.
 
@@ -2923,7 +2955,7 @@ class CubeDiagnostics(object):
         self.time1,self.time2=block_times(self,verbose=self.verbose)
         time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
         with iris.FUTURE.context(cell_datetime_objects=True):
-            x1=self.data_in['tsc'].extract(time_constraint)
+            x1=self.data_in['tsc_all'].extract(time_constraint)
         self.tsc=x1.concatenate_cube()
         # Make a copy of tsc and work on this copy
         tsc=self.tsc.copy()
@@ -3007,15 +3039,309 @@ class CubeDiagnostics(object):
             kdim+=1
         # Create iris cube of zz_star
         var_name='mltt'
-        standard_name='ocean_mixed_layer_thickness_defined_by_temperature'
+        standard_name=var_name2long_name[var_name]
         self.mltt=iris.cube.Cube(zz_star,standard_name=standard_name,var_name=var_name,units=lev_coord.units,dim_coords_and_dims=dim_coords)
         # Add cell method to describe calculation of mixed layer
         cm=iris.coords.CellMethod('point','depth',comments='depth where temp is temp (at depth '+str(zzsfc)+') minus '+str(deltatsc))
         self.mltt.add_cell_method(cm)
         # Save cube
         level=0
-        file_data_out=os.path.join(self.basedir,self.source,'std',var_name+'_'+str(level)+'_'+self.wildcard+'.nc')
-        fileout=replace_wildcard_with_time(self,file_data_out)
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
         print('fileout: {0!s}'.format(fileout))
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.mltt,fileout)
+
+    def f_vrtbudget(self,level_below,level,level_above):
+        """Calculate and save terms in vorticity budget at pressure level.
+
+        Assumes input data has already been loaded for current time
+        block, using f_read_data(), in:
+        
+        self.data_in['uwnd_<level_below>']
+        self.data_in['uwnd_<level>']
+        self.data_in['uwnd_<level_above>']
+        self.data_in['vwnd_<level_below>']
+        self.data_in['vwnd_<level>']
+        self.data_in['vwnd_<level_above>']
+        self.data_in['vrt_<level_below>']
+        self.data_in['vrt_<level>']
+        self.data_in['vrt_<level_above>']
+        self.data_in['omega_<level>']
+        self.data_in['div_<level>']
+
+        Calculate and create attributes:
+
+        self.dvrtdt (d zeta/dt) by centred differences
+
+        self.m_uwnd_dvrtdx (-u d zeta/dx)
+        self.m_vwnd_dvrtdy (-v d zeta/dy)
+        self.m_omega_dvrtdp (-omega d zeta/dp)
+
+        self.m_vrt_div (-zeta D)
+        self.m_ff_div (-fD)
+
+        self.m_beta_vwnd (-beta v)
+
+        self.m_domegadx_dvwnddp (-d omega/dx * dv/dp)
+        self.domegady_duwnddp (d omega/dy * du/dp)
+
+        self.source_dvrtdt (-u d zeta/dx -v d zeta/dy -omega d zeta/dp
+                            -zeta D -fD -beta v
+                           - d omega/dx * dv/dp +d omega/dy * du/dp)
+
+        self.res_dvrtdt : d zeta/dt = source + residual
+                          residual = d zeta/dt - source
+                          residual is the missing source needed to create
+                            the actual vorticity tendency
+
+        """
+        # Read data for current time block
+        self.time1,self.time2=block_times(self,verbose=self.verbose)
+        time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            #x1=self.data_in['uwnd_'+str(level_below)].extract(time_constraint)
+            #x2=self.data_in['uwnd_'+str(level)].extract(time_constraint)
+            #x3=self.data_in['uwnd_'+str(level_above)].extract(time_constraint)
+            #x4=self.data_in['vwnd_'+str(level_below)].extract(time_constraint)
+            #x5=self.data_in['vwnd_'+str(level)].extract(time_constraint)
+            #x6=self.data_in['vwnd_'+str(level_above)].extract(time_constraint)
+            #x7=self.data_in['vrt_'+str(level_below)].extract(time_constraint)
+            x8=self.data_in['vrt_'+str(level)].extract(time_constraint)
+            #x9=self.data_in['vrt_'+str(level_above)].extract(time_constraint)
+            #x10=self.data_in['omega_'+str(level)].extract(time_constraint)
+            #x11=self.data_in['div_'+str(level)].extract(time_constraint)
+        #self.uwnd_level_below=x1.concatenate_cube()
+        #self.uwnd_level=x2.concatenate_cube()
+        #self.uwnd_level_above=x3.concatenate_cube()
+        #self.vwnd_level_below=x4.concatenate_cube()
+        #self.vwnd_level=x5.concatenate_cube()
+        #self.vwnd_level_above=x6.concatenate_cube()
+        #self.vrt_level_below=x7.concatenate_cube()
+        self.vrt_level=x8.concatenate_cube()
+        #self.vrt_level_above=x9.concatenate_cube()
+        #self.omega_level=x10.concatenate_cube()
+        #self.div_level=x11.concatenate_cube()
+        #
+        ### Calculate dvrtdt
+        # Try to read vrt for timestep before beginning of current time block
+        # First create dummy of missing_value to substitute if no data
+        time_constraint=iris.Constraint(time=self.time1)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x20=self.data_in['vrt_'+str(level)].extract(time_constraint)
+        x21=x20.concatenate_cube()
+        shape=x21.data.shape
+        print('shape: {0!s}'.format(shape))
+        missing_value=1e20
+        dummy=missing_value*np.ones(shape)
+        lmask1=False
+        lmask2=False
+        #
+        time_before=self.time1-self.timedelta
+        print('time_before: {0!s}'.format(time_before))
+        time_constraint=iris.Constraint(time=time_before)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x12=self.data_in['vrt_'+str(level)].extract(time_constraint)
+        if len(x12)==0:
+            self.vrt_level_time_before=dummy
+            lmask1=True
+            print('Data at time_before not available, creating dummy data')
+        else:
+            x12a=x12.concatenate_cube()
+            self.vrt_level_time_before=x12a.data
+        # Try to read vrt for timestep after end of current time block
+        timedelta_second=datetime.timedelta(seconds=1)
+        time_after=self.time2+timedelta_second+self.timedelta
+        print('time_after: {0!s}'.format(time_after))
+        time_constraint=iris.Constraint(time=time_after)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x13=self.data_in['vrt_'+str(level)].extract(time_constraint)
+        if len(x13)==0:
+            self.vrt_level_time_after=dummy
+            lmask2=True
+            print('Data at time_after not available, creating dummy data')
+        else:
+            x13a=x13.concatenate_cube()
+            self.vrt_level_time_after=x13a.data
+        # Find index of time dimension
+        dim_coord_names=[xx.var_name for xx in self.vrt_level.dim_coords]
+        time_index=dim_coord_names.index('time')
+        print('time_index: {0!s}'.format(time_index))
+        vrt=self.vrt_level.data.copy()
+        vrt_time_minus1=np.roll(vrt,1,axis=time_index)
+        vrt_time_plus1=np.roll(vrt,-1,axis=time_index)
+        # Don't know how to assign to an arbitrary index.
+        if time_index==0:
+            vrt_time_minus1[0,...]=self.vrt_level_time_before
+            vrt_time_plus1[-1,...]=self.vrt_level_time_after
+        else:
+            raise UserWarning('Code up for time index other than 0')
+        # Find dvrtdt from centered differences
+        deltatime_seconds=self.timedelta.seconds
+        dvrtdt=(vrt_time_plus1-vrt_time_minus1)/(2*deltatime_seconds)
+        # Mask missing values if needed
+        if lmask1:
+            dvrtdt[0,...]=dummy
+            dvrtdt=np.ma.masked_equal(dvrtdt,missing_value)
+        if lmask2:
+            dvrtdt[-1,...]=dummy
+            dvrtdt=np.ma.masked_equal(dvrtdt,missing_value)
+        # Create iris cube
+        dvrtdt=conv_float32(dvrtdt)
+        dvrtdt=create_cube(dvrtdt,self.vrt_level)
+        var_name='dvrtdt'
+        long_name=var_name2long_name[var_name]
+        dvrtdt.rename(long_name) # not a standard_name
+        dvrtdt.var_name=var_name
+        vrt_tendency_units='s-2'
+        dvrtdt.units=vrt_tendency_units
+        self.dvrtdt=dvrtdt
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.dvrtdt,fileout)
+        #
+        ### Calculate m_uwnd_dvrtdx and m_vwnd_dvrtdx
+        pdb.set_trace()
+        ww=VectorWind(self.uwnd_level,self.vwnd_level)
+        dvrtdx,dvrtdy=ww.gradient(self.vrt_level)
+        m_uwnd_dvrtdx=-1*self.uwnd_level*dvrtdx
+        m_vwnd_dvrtdy=-1*self.vwnd_level*dvrtdy
+        # m_uwnd_dvrtdx attributes
+        var_name='m_uwnd_dvrtdx'
+        long_name=var_name2long_name[var_name]
+        m_uwnd_dvrtdx.rename(long_name) # not a standard_name
+        m_uwnd_dvrtdx.var_name=var_name
+        m_uwnd_dvrtdx.units=vrt_tendency_units
+        self.m_uwnd_dvrtdx=m_uwnd_dvrtdx
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.m_uwnd_dvrtdx,fileout)
+        # m_vwnd_dvrtdy attributes
+        var_name='m_vwnd_dvrtdy'
+        long_name=var_name2long_name[var_name]
+        m_vwnd_dvrtdy.rename(long_name) # not a standard_name
+        m_vwnd_dvrtdy.var_name=var_name
+        m_vwnd_dvrtdy.units=vrt_tendency_units
+        self.m_vwnd_dvrtdy=m_vwnd_dvrtdy
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.m_vwnd_dvrtdy,fileout)
+        #
+        ### Calculate m_omega_dvrtdp
+        deltap=100*(level_below-level_above) # Pa
+        print('deltap: {0!s}'.format(deltap))
+        dvrtdp=(self.vrt_level_below-self.vrt_level_above)/deltap
+        m_omega_dvrtdp=-1*self.omega_level*dvrtdp
+        # Attributes
+        var_name='m_omega_dvrtdp'
+        long_name=var_name2long_name[var_name]
+        m_omega_dvrtdp.rename(long_name) # not a standard_name
+        m_omega_dvrtdp.var_name=var_name
+        m_omega_dvrtdp.units=vrt_tendency_units
+        self.m_omega_dvrtdp=m_omega_dvrtdp
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.m_omega_dvrtdp,fileout)
+        #
+        ### m_vrt_div
+        m_vrt_div=-1*self.vrt_level*self.div_level
+        # Attributes
+        var_name='m_vrt_div'
+        long_name=var_name2long_name[var_name]
+        m_vrt_div.rename(long_name) # not a standard_name
+        m_vrt_div.var_name=var_name
+        m_vrt_div.units=vrt_tendency_units
+        self.m_vrt_div=m_vrt_div
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.m_vrt_div,fileout)
+        #
+        ### m_beta_vwnd
+        ff=ww.planetaryvorticity()
+        dummy,beta=ff.gradient()
+        m_beta_vwnd=-1*beta*vwnd_level
+        # Attributes
+        var_name='m_beta_vwnd'
+        long_name=var_name2long_name[var_name]
+        m_beta_vwnd.rename(long_name) # not a standard_name
+        m_beta_vwnd.var_name=var_name
+        m_beta_vwnd.units=vrt_tendency_units
+        self.m_beta_vwnd=m_beta_vwnd
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.m_beta_vwnd,fileout)
+        #
+        ### m_domegadx_dvwnddp
+        domegadx,domegady=omega.gradient()
+        dvwnddp=(self.vwnd_level_below-self.vwnd_level_above)/deltap
+        m_domegadx_dvwnddp=-1*domegadx*dvwnddp
+        # Attributes
+        var_name='m_domegadx_dvwnddp'
+        long_name=var_name2long_name[var_name]
+        m_domegadx_dvwnddp.rename(long_name) # not a standard_name
+        m_domegadx_dvwnddp.var_name=var_name
+        m_domegadx_dvwnddp.units=vrt_tendency_units
+        self.m_domegadx_dvwnddp=m_domegadx_dvwnddp
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.m_domegadx_dvwnddp,fileout)
+        #
+        ### domegady_duwnddp
+        duwnddp=(self.uwnd_level_below-self.uwnd_level_above)/deltap
+        domegady_duwnddp=domegady*duwnddp
+        # Attributes
+        var_name='domegady_duwnddp'
+        long_name=var_name2long_name[var_name]
+        domegady_duwnddp.rename(long_name) # not a standard_name
+        domegady_duwnddp.var_name=var_name
+        domegady_duwnddp.units=vrt_tendency_units
+        self.domegady_duwnddp=domegady_duwnddp
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.domegady_duwnddp,fileout)
+        #
+        ### source_dvrtdt (total source)
+        source_dvrtdt=self.m_uwnd_dvrtdx+self.m_vwnd_dvrtdy+self.m_omega_dvrtdp+self.m_vrt_div+self.m_ff_div+self.m_beta_vwnd+self.m_domegadx_dvwnddp+self.domegady_duwnddp
+        # Attributes
+        var_name='source_dvrtdt'
+        long_name=var_name2long_name[var_name]
+        source_dvrtdt.rename(long_name) # not a standard_name
+        source_dvrtdt.var_name=var_name
+        source_dvrtdt.units=vrt_tendency_units
+        self.source_dvrtdt=source_dvrtdt
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.source_dvrtdt,fileout)
+        #
+        ### res_dvrtdt (residual)
+        res_dvrtdt=self.dvrtdt-self.source_dvrtdt
+        # Attributes
+        var_name='res_dvrtdt'
+        long_name=var_name2long_name[var_name]
+        res_dvrtdt.rename(long_name) # not a standard_name
+        res_dvrtdt.var_name=var_name
+        res_dvrtdt.units=vrt_tendency_units
+        self.res_dvrtdt=res_dvrtdt
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.res_dvrtdt,fileout)
