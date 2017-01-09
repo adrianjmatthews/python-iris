@@ -56,9 +56,13 @@ h2b='--------------------------->>>\n'
 # However, there is a prescribed list of allowed standard_name values
 # 'tendency_of_atmosphere_relative_vorticity' (or any alternative) is not on
 # the list, and an error will result if this is set as a standard_name.
-# So do not use the standard_name attribute.
-# Use the long_name attribute instead throughout the scripts.
-# There is no restriction on long_name values.
+# Use the iris.cube.Cube.rename(name) method to set the name of a cube
+#   This sets the standard_name attribute if name is a valid standard_name
+#   Otherwise it sets the long_name attribute to name.
+# ie do not explicitly set the standard_name attribute as this will cause an
+#   error if the desired name is not a valid standard_name
+# To set the name of cube1 to the name of cube 2, use
+#   cube1.rename(cube2.name())
 var_name2long_name={
     'chi':'atmosphere_horizontal_velocity_potential',
     'div':'divergence_of_wind',
@@ -86,6 +90,7 @@ var_name2long_name={
     'res_dvrtdt':'residual_tendency_of_atmosphere_relative_vorticity',
     'sa':'sea_water_absolute_salinity',
     'shum':'specific_humidity',
+    'source_dvrtdt':'total_source_of_tendency_of_atmosphere_relative_vorticity',
     'sst':'sea_surface_temperature',
     'swr':'surface_downwelling_shortwave_flux',
     'ta':'air_temperature',
@@ -97,6 +102,11 @@ var_name2long_name={
     'wwnd':'upward_air_velocity',
     'zg':'geopotential_height',
     }
+
+# Create inverse dictionary
+def invert_dict(d):
+    return dict([(v,k) for k,v in d.items()])
+var_long_name2name=invert_dict(var_name2long_name)
 
 #==========================================================================
 
@@ -128,7 +138,7 @@ def source_info(aa):
     if aa.data_source not in valid_data_sources:
         raise UserWarning('data_source {0.data_source!s} not vaild'.format(aa))
     # Set outfile_frequency attribute depending on source information
-    if aa.source in ['erainterim_plev_6h','ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_7d','sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h','sgallm031oi01_zlev_h','sstrey_sfc_d','tropflux_sfc_d']:
+    if aa.source in ['erainterim_plev_6h','ncepdoe_plev_6h','ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_7d','sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h','sgallm031oi01_zlev_h','sstrey_sfc_d','tropflux_sfc_d']:
         aa.outfile_frequency='year'
         aa.wildcard='????'
     elif aa.source in ['trmm3b42v7_sfc_3h','trmm3b42v7_sfc_d']:
@@ -288,7 +298,8 @@ def create_cube(array,oldcube,new_axis=False):
             dim_coords.append([xx,kdim])
             kdim+=1
     # Create cube
-    newcube=iris.cube.Cube(array,standard_name=oldcube.standard_name,var_name=oldcube.var_name,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
+    newcube=iris.cube.Cube(array,var_name=oldcube.var_name,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
+    newcube.rename(oldcube.name())
     # Add aux coords
     for xx in oldcube.aux_coords:
         newcube.add_aux_coord(xx)
@@ -709,8 +720,6 @@ class DataConverter(object):
     
     self.var_name : string name of variable, e.g., 'uwnd'.
 
-    self.standard_name : 
-
     self.raw_name : string name of variable in the raw input file.
 
     self.level : integer single level, e.g., 200 for 200 hPa.  Level naming
@@ -793,7 +802,7 @@ class DataConverter(object):
         # Set input file name(s)
         if self.source in ['erainterim_plev_6h']:
             self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+str(self.level)+'_'+str(self.year)+'_6.nc')
-        elif self.source in ['ncepdoe_plev_d','ncepncar_plev_d']:
+        elif self.source in ['ncepdoe_plev_6h','ncepdoe_plev_d','ncepncar_plev_d']:
             self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.'+str(self.year)+'.nc')
         elif self.source in ['ncepncar_sfc_d',]:
             self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.sig995.'+str(self.year)+'.nc')
@@ -835,8 +844,11 @@ class DataConverter(object):
         if self.data_source in ['erainterim',]:
             if self.var_name in['omega']:
                 self.raw_name='vertical_air_velocity_expressed_as_tendency_of_pressure'
+        elif self.data_source in ['ncepdoe',]:
+            if self.var_name in['omega']:
+                self.raw_name=self.var_name
         elif self.data_source in ['ncepncar',]:
-            if self.var_name in['uwnd','vwnd']:
+            if self.var_name in['uwnd','vwnd','omega']:
                 self.raw_name=self.var_name
         elif self.data_source in ['olrinterp',]:
             self.raw_name='olr'
@@ -890,7 +902,7 @@ class DataConverter(object):
         #
         # Universal format changes
         self.cube.var_name=self.var_name
-        self.cube.standard_name=self.name
+        self.cube.rename(self.name)
         self.cube.coord('time').bounds=None
         #
         # BoBBLE OI glider data from Ben Webber
@@ -988,7 +1000,8 @@ class DataConverter(object):
                 dim_coords.append([xx,kdim])
                 kdim+=1
             dim_coords.append([loncoord,kdim])
-            x5=iris.cube.Cube(x4,standard_name=x1.standard_name,var_name=x1.var_name,units=x1.units,attributes=x1.attributes,cell_methods=x1.cell_methods,dim_coords_and_dims=dim_coords)
+            x5=iris.cube.Cube(x4,var_name=x1.var_name,units=x1.units,attributes=x1.attributes,cell_methods=x1.cell_methods,dim_coords_and_dims=dim_coords)
+            x5.rename(x1.name())
             self.cube=x5
 
     def write_cube(self):
@@ -1061,6 +1074,7 @@ class TimeDomStats(object):
         self.tdomain.ascii2datetime()
         self.tdomain.f_nevents()
         self.fileout_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'.nc')
+        self.fileout_lagged_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_lag.nc')
         self.fileout_dc=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_dc.nc')
         if self.verbose:
             print(self)
@@ -1078,6 +1092,7 @@ class TimeDomStats(object):
                 'data_in: {0.data_in!s} \n'+\
                 'filein1: {0.filein1!s} \n'+\
                 'fileout_mean: {0.fileout_mean!s} \n'+\
+                'fileout_lagged_mean: {0.fileout_lagged_mean!s} \n'+\
                 'fileout_dc: {0.fileout_dc!s} \n'+h1b
             return ss.format(self)
         else:
@@ -1142,7 +1157,7 @@ class TimeDomStats(object):
         x2.data/=ntime_total
         time_mean=x2
         # Set attributes
-        time_mean.standard_name=self.name
+        time_mean.rename(self.name)
         time_mean.units=self.units
         # Add cell method to describe time mean
         cm=iris.coords.CellMethod('point','time',comments='mean over time domain '+self.tdomain.idx)
@@ -1150,6 +1165,66 @@ class TimeDomStats(object):
         self.time_mean=time_mean
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.time_mean,self.fileout_mean)
+
+    def f_lagged_mean(self,lags=[0,]):
+        """Calculate time-lagged means over time domain and save.
+
+        self.tdomain must be of type 'single'.
+
+        Input:
+
+        lags : list of integer lags (default is [0,]). These are
+        combined with self.timedelta to create the lags to calculate
+        the mean over.  E.g., if lags=[-5,0,5] and self.timedelta is 1
+        day, then lagged means will be calculated at lags of -5, 0,
+        and 5 days.
+
+        Create attributes:
+
+        self.lags : lags
+
+        self.nlags : length of list of lags
+
+        self.lagged_mean : iris cube of lagged means.  Shape is
+        (self.nlags,...)  where ... is shape of input cube.  The 'lag'
+        axis is a time axis, relative to an arbitrary reference time
+        of 1000-01-01 00:00:0.0
+
+        """
+        # Check that time domain is of type 'single'
+        self.tdomain.time_domain_type()
+        if self.tdomain.type!='single':
+            raise UserWarning("Warning: time domain type is '{0.tdomain.type}'.  It must be 'single'.".format(self))
+        # Set lags and nlags attributes
+        self.lags=lags
+        self.nlags=len(lags)
+        timelag_units='hours since 1000-01-01 00:00:0.0'
+        # Loop over lags
+        cubelist=iris.cube.CubeList([])
+        for lagc in self.lags:
+            timedelta_lagc=lagc*self.timedelta
+            print('lagc,timedelta_lagc : {0!s}, {1!s}'.format(lagc,timedelta_lagc))
+            datetimes_lagc=[xx[0]+timedelta_lagc for xx in self.tdomain.datetimes]
+            time_constraints_lagc=[iris.Constraint(time=xx) for xx in datetimes_lagc]
+            with iris.FUTURE.context(cell_datetime_objects=True):
+                x1=[self.data_in.extract(xx) for xx in time_constraints_lagc]
+            x2=[xx.concatenate_cube() for xx in x1]
+            x3=iris.cube.CubeList(x2)
+            x4=x3.merge_cube()
+            x5=x4.collapsed('time',iris.analysis.MEAN)
+            x5.remove_coord('time')
+            hours_lagc=timedelta_lagc.total_seconds()/3600
+            timelag_coord=iris.coords.DimCoord([hours_lagc],standard_name='time',units=timelag_units)
+            x5.add_aux_coord(timelag_coord)
+            cubelist.append(x5)
+        lagged_mean=cubelist.merge_cube()
+        # Add cell method to describe time mean
+        cm=iris.coords.CellMethod('point','time',comments='lagged mean over time domain '+self.tdomain.idx)
+        lagged_mean.add_cell_method(cm)
+        #
+        self.lagged_mean=lagged_mean
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.lagged_mean,self.fileout_lagged_mean)
 
     def f_diurnal_cycle(self,double=True):
         """Calculate mean diurnal cycle.
@@ -1532,15 +1607,15 @@ class TimeAverage(object):
         if self.frequency=='d':
             # Creating daily average data
             timedelta_day=datetime.timedelta(days=1)
+            timedelta_minute=datetime.timedelta(seconds=60)
             timec1=time1
             # Create empty CubeList
             x10=iris.cube.CubeList([])
             while timec1<time2:
                 # Extract data over current day
-                timec2=timec1+timedelta_day
+                timec2=timec1+timedelta_day-timedelta_minute
                 print(timec1,timec2)
-                # Note careful use of <= and < in time_constraint
-                time_constraintc=iris.Constraint(time = lambda cell: timec1 <= cell < timec2)
+                time_constraintc=iris.Constraint(time = lambda cell: timec1 <= cell <= timec2)
                 with iris.FUTURE.context(cell_datetime_objects=True):
                     x1=self.data_in.extract(time_constraintc)
                 x2=x1.concatenate_cube()
@@ -1938,7 +2013,7 @@ class Wind(object):
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.psi,fileout1)
                 iris.save(self.chi,fileout2)
-        # psi only
+        # or psi only
         elif self.flag_psi:
             self.psi=self.ww.streamfunction()
             self.psi.var_name=self.var_name_psi
@@ -1946,7 +2021,7 @@ class Wind(object):
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.psi,fileout)
-        # chi only
+        # or chi only
         elif self.flag_chi:
             self.chi=self.ww.velocitypotential()
             self.chi.var_name=self.var_name_chi
@@ -1960,13 +2035,13 @@ class Wind(object):
             self.vrt.var_name=self.var_name_vrt
             self.div.var_name=self.var_name_div
             fileout1=replace_wildcard_with_time(self,self.file_data_vrt)
-            fileout1=replace_wildcard_with_time(self,self.file_data_div)
+            fileout2=replace_wildcard_with_time(self,self.file_data_div)
             print('fileout1: {0!s}'.format(fileout1))
             print('fileout2: {0!s}'.format(fileout2))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.vrt,fileout1)
                 iris.save(self.div,fileout2)
-        # vrt only
+        # or vrt only
         elif self.flag_vrt:
             self.vrt=self.ww.vorticity()
             self.vrt.var_name=self.var_name_vrt
@@ -1974,7 +2049,7 @@ class Wind(object):
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.vrt,fileout)
-        # div only
+        # or div only
         elif self.flag_div:
             self.div=self.ww.divergence()
             self.div.var_name=self.var_name_div
@@ -2253,14 +2328,14 @@ class AnnualCycle(object):
         time_val=np.arange(59)
         tcoord=iris.coords.DimCoord(time_val,standard_name='time',units=time_units)
         janfeb.add_dim_coord(tcoord,0)
-        janfeb.standard_name=janfebc.standard_name
+        janfeb.rename(janfebc.name())
         janfeb.var_name=janfebc.var_name
         janfeb.attributes=janfebc.attributes
         # mardec
         time_val=np.arange(59,365)
         tcoord=iris.coords.DimCoord(time_val,standard_name='time',units=time_units)
         mardec.add_dim_coord(tcoord,0)
-        mardec.standard_name=mardecc.standard_name
+        mardec.rename(mardecc.name())
         mardec.var_name=mardecc.var_name
         mardec.attributes=mardecc.attributes
         # Create a cubelist then a single cube
@@ -2516,7 +2591,7 @@ class AnnualCycle(object):
                 data_anom=iris.analysis.maths.subtract(data_in,data_anncycle)
                 # Add back time coordinate and update metadata
                 data_anom.add_dim_coord(tcoord,0)
-                data_anom.standard_name=data_in.standard_name
+                data_anom.rename(data_in.name())
                 data_anom.var_name=data_in.var_name
                 data_anom.attributes=data_in.attributes
                 # Add a cell method to describe the smoothed annual cycle
@@ -2699,7 +2774,8 @@ class GliderMission(object):
         for xx in oldcube.dim_coords[1:]:
             dim_coords.append([xx,kdim])
             kdim+=1
-        x4=iris.cube.Cube(conv_float32(x3),standard_name=oldcube.standard_name,var_name=oldcube.var_name,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
+        x4=iris.cube.Cube(conv_float32(x3),var_name=oldcube.var_name,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
+        x4.rename(oldcube.name())
         # Mask missing values
         x4.data=np.ma.masked_greater(x4.data,missing_value/10)
         # Create data_oi_interp_lon attribute dictionary entry
@@ -3039,8 +3115,9 @@ class CubeDiagnostics(object):
             kdim+=1
         # Create iris cube of zz_star
         var_name='mltt'
-        standard_name=var_name2long_name[var_name]
-        self.mltt=iris.cube.Cube(zz_star,standard_name=standard_name,var_name=var_name,units=lev_coord.units,dim_coords_and_dims=dim_coords)
+        long_name=var_name2long_name[var_name]
+        self.mltt=iris.cube.Cube(zz_star,var_name=var_name,units=lev_coord.units,dim_coords_and_dims=dim_coords)
+        self.mltt.rename(long_name)
         # Add cell method to describe calculation of mixed layer
         cm=iris.coords.CellMethod('point','depth',comments='depth where temp is temp (at depth '+str(zzsfc)+') minus '+str(deltatsc))
         self.mltt.add_cell_method(cm)
@@ -3100,28 +3177,28 @@ class CubeDiagnostics(object):
         self.time1,self.time2=block_times(self,verbose=self.verbose)
         time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
         with iris.FUTURE.context(cell_datetime_objects=True):
-            #x1=self.data_in['uwnd_'+str(level_below)].extract(time_constraint)
-            #x2=self.data_in['uwnd_'+str(level)].extract(time_constraint)
-            #x3=self.data_in['uwnd_'+str(level_above)].extract(time_constraint)
-            #x4=self.data_in['vwnd_'+str(level_below)].extract(time_constraint)
-            #x5=self.data_in['vwnd_'+str(level)].extract(time_constraint)
-            #x6=self.data_in['vwnd_'+str(level_above)].extract(time_constraint)
-            #x7=self.data_in['vrt_'+str(level_below)].extract(time_constraint)
+            x1=self.data_in['uwnd_'+str(level_below)].extract(time_constraint)
+            x2=self.data_in['uwnd_'+str(level)].extract(time_constraint)
+            x3=self.data_in['uwnd_'+str(level_above)].extract(time_constraint)
+            x4=self.data_in['vwnd_'+str(level_below)].extract(time_constraint)
+            x5=self.data_in['vwnd_'+str(level)].extract(time_constraint)
+            x6=self.data_in['vwnd_'+str(level_above)].extract(time_constraint)
+            x7=self.data_in['vrt_'+str(level_below)].extract(time_constraint)
             x8=self.data_in['vrt_'+str(level)].extract(time_constraint)
-            #x9=self.data_in['vrt_'+str(level_above)].extract(time_constraint)
-            #x10=self.data_in['omega_'+str(level)].extract(time_constraint)
-            #x11=self.data_in['div_'+str(level)].extract(time_constraint)
-        #self.uwnd_level_below=x1.concatenate_cube()
-        #self.uwnd_level=x2.concatenate_cube()
-        #self.uwnd_level_above=x3.concatenate_cube()
-        #self.vwnd_level_below=x4.concatenate_cube()
-        #self.vwnd_level=x5.concatenate_cube()
-        #self.vwnd_level_above=x6.concatenate_cube()
-        #self.vrt_level_below=x7.concatenate_cube()
+            x9=self.data_in['vrt_'+str(level_above)].extract(time_constraint)
+            x10=self.data_in['omega_'+str(level)].extract(time_constraint)
+            x11=self.data_in['div_'+str(level)].extract(time_constraint)
+        self.uwnd_level_below=x1.concatenate_cube()
+        self.uwnd_level=x2.concatenate_cube()
+        self.uwnd_level_above=x3.concatenate_cube()
+        self.vwnd_level_below=x4.concatenate_cube()
+        self.vwnd_level=x5.concatenate_cube()
+        self.vwnd_level_above=x6.concatenate_cube()
+        self.vrt_level_below=x7.concatenate_cube()
         self.vrt_level=x8.concatenate_cube()
-        #self.vrt_level_above=x9.concatenate_cube()
-        #self.omega_level=x10.concatenate_cube()
-        #self.div_level=x11.concatenate_cube()
+        self.vrt_level_above=x9.concatenate_cube()
+        self.omega_level=x10.concatenate_cube()
+        self.div_level=x11.concatenate_cube()
         #
         ### Calculate dvrtdt
         # Try to read vrt for timestep before beginning of current time block
@@ -3177,7 +3254,8 @@ class CubeDiagnostics(object):
         else:
             raise UserWarning('Code up for time index other than 0')
         # Find dvrtdt from centered differences
-        deltatime_seconds=self.timedelta.seconds
+        deltatime_seconds=self.timedelta.total_seconds()
+        print('deltatime_seconds: {0!s}'.format(deltatime_seconds))
         dvrtdt=(vrt_time_plus1-vrt_time_minus1)/(2*deltatime_seconds)
         # Mask missing values if needed
         if lmask1:
@@ -3203,7 +3281,6 @@ class CubeDiagnostics(object):
             iris.save(self.dvrtdt,fileout)
         #
         ### Calculate m_uwnd_dvrtdx and m_vwnd_dvrtdx
-        pdb.set_trace()
         ww=VectorWind(self.uwnd_level,self.vwnd_level)
         dvrtdx,dvrtdy=ww.gradient(self.vrt_level)
         m_uwnd_dvrtdx=-1*self.uwnd_level*dvrtdx
@@ -3251,7 +3328,7 @@ class CubeDiagnostics(object):
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.m_omega_dvrtdp,fileout)
         #
-        ### m_vrt_div
+        ### Calculate m_vrt_div
         m_vrt_div=-1*self.vrt_level*self.div_level
         # Attributes
         var_name='m_vrt_div'
@@ -3266,10 +3343,26 @@ class CubeDiagnostics(object):
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.m_vrt_div,fileout)
         #
-        ### m_beta_vwnd
+        ### Calculate m_ff_div
         ff=ww.planetaryvorticity()
-        dummy,beta=ff.gradient()
-        m_beta_vwnd=-1*beta*vwnd_level
+        m_ff_div=-1*ff*self.div_level
+        m_ff_div.data=conv_float32(m_ff_div.data)
+        # Attributes
+        var_name='m_ff_div'
+        long_name=var_name2long_name[var_name]
+        m_ff_div.rename(long_name) # not a standard_name
+        m_ff_div.var_name=var_name
+        m_ff_div.units=vrt_tendency_units
+        self.m_ff_div=m_ff_div
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.m_ff_div,fileout)
+        #
+        ### Calculate m_beta_vwnd
+        dummy,beta=ww.gradient(ff)
+        m_beta_vwnd=-1*beta*self.vwnd_level
         # Attributes
         var_name='m_beta_vwnd'
         long_name=var_name2long_name[var_name]
@@ -3283,10 +3376,11 @@ class CubeDiagnostics(object):
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.m_beta_vwnd,fileout)
         #
-        ### m_domegadx_dvwnddp
-        domegadx,domegady=omega.gradient()
+        ### Calculate m_domegadx_dvwnddp
+        domegadx,domegady=ww.gradient(self.omega_level)
         dvwnddp=(self.vwnd_level_below-self.vwnd_level_above)/deltap
         m_domegadx_dvwnddp=-1*domegadx*dvwnddp
+        m_domegadx_dvwnddp.data=conv_float32(m_domegadx_dvwnddp.data)
         # Attributes
         var_name='m_domegadx_dvwnddp'
         long_name=var_name2long_name[var_name]
@@ -3300,9 +3394,10 @@ class CubeDiagnostics(object):
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.m_domegadx_dvwnddp,fileout)
         #
-        ### domegady_duwnddp
+        ### Calculate domegady_duwnddp
         duwnddp=(self.uwnd_level_below-self.uwnd_level_above)/deltap
         domegady_duwnddp=domegady*duwnddp
+        domegady_duwnddp.data=conv_float32(domegady_duwnddp.data)
         # Attributes
         var_name='domegady_duwnddp'
         long_name=var_name2long_name[var_name]
@@ -3316,8 +3411,9 @@ class CubeDiagnostics(object):
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.domegady_duwnddp,fileout)
         #
-        ### source_dvrtdt (total source)
+        ### Calculate source_dvrtdt (total source)
         source_dvrtdt=self.m_uwnd_dvrtdx+self.m_vwnd_dvrtdy+self.m_omega_dvrtdp+self.m_vrt_div+self.m_ff_div+self.m_beta_vwnd+self.m_domegadx_dvwnddp+self.domegady_duwnddp
+        source_dvrtdt.data=conv_float32(source_dvrtdt.data)
         # Attributes
         var_name='source_dvrtdt'
         long_name=var_name2long_name[var_name]
@@ -3331,8 +3427,9 @@ class CubeDiagnostics(object):
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.source_dvrtdt,fileout)
         #
-        ### res_dvrtdt (residual)
+        ### Calculate res_dvrtdt (residual)
         res_dvrtdt=self.dvrtdt-self.source_dvrtdt
+        res_dvrtdt.data=conv_float32(res_dvrtdt.data)
         # Attributes
         var_name='res_dvrtdt'
         long_name=var_name2long_name[var_name]
