@@ -61,8 +61,11 @@ h2b='--------------------------->>>\n'
 #   Otherwise it sets the long_name attribute to name.
 # ie do not explicitly set the standard_name attribute as this will cause an
 #   error if the desired name is not a valid standard_name
+# rename method sets var_name to None if name is not a valid standard_name
+# So var_name needs to be reset explicitly after rename has been called
 # To set the name of cube1 to the name of cube 2, use
 #   cube1.rename(cube2.name())
+#   cube1.var_name=cube2.var_name
 var_name2long_name={
     'chi':'atmosphere_horizontal_velocity_potential',
     'div':'divergence_of_wind',
@@ -298,8 +301,9 @@ def create_cube(array,oldcube,new_axis=False):
             dim_coords.append([xx,kdim])
             kdim+=1
     # Create cube
-    newcube=iris.cube.Cube(array,var_name=oldcube.var_name,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
+    newcube=iris.cube.Cube(array,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
     newcube.rename(oldcube.name())
+    newcube.var_name=oldcube.var_name
     # Add aux coords
     for xx in oldcube.aux_coords:
         newcube.add_aux_coord(xx)
@@ -901,8 +905,8 @@ class DataConverter(object):
         """
         #
         # Universal format changes
-        self.cube.var_name=self.var_name
         self.cube.rename(self.name)
+        self.cube.var_name=self.var_name
         self.cube.coord('time').bounds=None
         #
         # BoBBLE OI glider data from Ben Webber
@@ -1000,8 +1004,9 @@ class DataConverter(object):
                 dim_coords.append([xx,kdim])
                 kdim+=1
             dim_coords.append([loncoord,kdim])
-            x5=iris.cube.Cube(x4,var_name=x1.var_name,units=x1.units,attributes=x1.attributes,cell_methods=x1.cell_methods,dim_coords_and_dims=dim_coords)
+            x5=iris.cube.Cube(x4,units=x1.units,attributes=x1.attributes,cell_methods=x1.cell_methods,dim_coords_and_dims=dim_coords)
             x5.rename(x1.name())
+            x5.var_name=x1.var_name
             self.cube=x5
 
     def write_cube(self):
@@ -1158,6 +1163,7 @@ class TimeDomStats(object):
         time_mean=x2
         # Set attributes
         time_mean.rename(self.name)
+        time_mean.var_name=self.var_name
         time_mean.units=self.units
         # Add cell method to describe time mean
         cm=iris.coords.CellMethod('point','time',comments='mean over time domain '+self.tdomain.idx)
@@ -2539,7 +2545,6 @@ class AnnualCycle(object):
         """
         # Set initial value of current year
         yearc=self.time1.year
-        #yearc=2016
         # Set final value of current year
         year_end=self.time2.year
         #
@@ -2774,8 +2779,9 @@ class GliderMission(object):
         for xx in oldcube.dim_coords[1:]:
             dim_coords.append([xx,kdim])
             kdim+=1
-        x4=iris.cube.Cube(conv_float32(x3),var_name=oldcube.var_name,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
+        x4=iris.cube.Cube(conv_float32(x3),units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
         x4.rename(oldcube.name())
+        x4.var_name=oldcube.var_name
         # Mask missing values
         x4.data=np.ma.masked_greater(x4.data,missing_value/10)
         # Create data_oi_interp_lon attribute dictionary entry
@@ -3116,8 +3122,9 @@ class CubeDiagnostics(object):
         # Create iris cube of zz_star
         var_name='mltt'
         long_name=var_name2long_name[var_name]
-        self.mltt=iris.cube.Cube(zz_star,var_name=var_name,units=lev_coord.units,dim_coords_and_dims=dim_coords)
+        self.mltt=iris.cube.Cube(zz_star,units=lev_coord.units,dim_coords_and_dims=dim_coords)
         self.mltt.rename(long_name)
+        self.mltt.var_name=var_name
         # Add cell method to describe calculation of mixed layer
         cm=iris.coords.CellMethod('point','depth',comments='depth where temp is temp (at depth '+str(zzsfc)+') minus '+str(deltatsc))
         self.mltt.add_cell_method(cm)
