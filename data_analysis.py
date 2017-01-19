@@ -35,6 +35,7 @@ import datetime
 import os.path
 import pdb
 
+import gsw # Gibbs TEOS-10 seawater routines
 import iris
 from iris.time import PartialDateTime
 import numpy as np
@@ -95,6 +96,8 @@ var_name2long_name={
     'shum':'specific_humidity',
     'source_dvrtdt':'total_source_of_tendency_of_atmosphere_relative_vorticity',
     'sst':'sea_surface_temperature',
+    'swp':'sea_water_pressure',
+    'swpd':'sea_water_potential_density',
     'swr':'surface_downwelling_shortwave_flux',
     'ta':'air_temperature',
     'tsc':'sea_water_conservative_temperature',
@@ -233,7 +236,7 @@ def clean_callback(cube,field,filename):
 
 #==========================================================================
 
-def create_cube(array,oldcube,new_axis=False):
+def create_cube(array,oldcube,new_axis=False,new_var_name=False):
     """Create an iris cube from a numpy array and attributes from an old cube.
 
     Inputs:
@@ -244,13 +247,13 @@ def create_cube(array,oldcube,new_axis=False):
 
     <new_axis> is either False, or an iris cube axis (e.g., a time axis).
 
+    <new_var_name> is either False, or a string variable name, e.g., 'psi'
+
     Output:
 
     <newcube> is an iris cube of the same shape as <array>
 
     Usage:
-
-    There are two possible options.
 
     If <new_axis> is False then array and oldcube must have the same
     shape and dimensions.  <newcube> is then simply an iris cube
@@ -268,6 +271,8 @@ def create_cube(array,oldcube,new_axis=False):
     longitude axes from <oldcube>, plus all the attributes of
     <oldcube>.
 
+    If <new_var_name> is False, the new cube has the same name as the
+    old cube, otherwise it is renamed.
     
     """
     if new_axis:
@@ -302,8 +307,14 @@ def create_cube(array,oldcube,new_axis=False):
             kdim+=1
     # Create cube
     newcube=iris.cube.Cube(array,units=oldcube.units,attributes=oldcube.attributes,cell_methods=oldcube.cell_methods,dim_coords_and_dims=dim_coords)
-    newcube.rename(oldcube.name())
-    newcube.var_name=oldcube.var_name
+    # Name cube
+    if new_var_name:
+        new_long_name=var_name2long_name[new_var_name]
+        newcube.rename(new_long_name)
+        newcube.var_name=new_var_name
+    else:
+        newcube.rename(oldcube.name())
+        newcube.var_name=oldcube.var_name
     # Add aux coords
     for xx in oldcube.aux_coords:
         newcube.add_aux_coord(xx)
@@ -933,6 +944,25 @@ class DataConverter(object):
             #print('new_time_coord : {0!s}'.format(new_time_coord))
             #self.cube.remove_coord('time')
             #self.cube.add_dim_coord(new_time_coord,0)
+            # Dec 2016.  New data set with time axis units of
+            # 'seconds since 1970-01-01'.  However, this suffers from
+            # round off error.
+            # 5 Dec 2016.  Ben redid analysis and set time axis to
+            # 'hours since 2016-1-1' with first time value being 4369 and the
+            # last being 4800 (ntime=432)
+            # 9 Jan 2017.  Ben supplied new OI data for SG532 with corrected
+            #   salinity.  However, time axis had reverted back to
+            #   'seconds since 1970-1-1' which suffers from round off error.
+            # Overwrite
+            tc=self.cube.coord('time')
+            if tc.points.shape!=(432,):
+                raise ValueError('Time axis not right')
+            new_time_vals=conv_float32(np.arange(4369,4800+1))
+            new_time_units='hours since 2016-1-1'
+            new_time_coord=iris.coords.DimCoord(new_time_vals,standard_name='time',units=new_time_units)
+            print('new_time_coord : {0!s}'.format(new_time_coord))
+            self.cube.remove_coord('time')
+            self.cube.add_dim_coord(new_time_coord,0)
             if self.var_name=='tsc':
                 self.cube.units='degC'
             elif self.var_name=='lon':
@@ -1345,7 +1375,6 @@ class TimeDomStats(object):
             x12=iris.cube.CubeList([self.mean_dc,x11])
             x13=x12.concatenate_cube()
             # Overwrite mean_dc attribute
-            #pdb.set_trace()
             self.mean_dc=x13
             
         # Save diurnal cycle
@@ -1506,7 +1535,6 @@ class TimeFilter(object):
         # Apply filter
         x3=self.data_current.rolling_window('time',iris.analysis.MEAN,
                 self.nweights,weights=self.weights)
-        #pdb.set_trace()
         # Create a cube from this numpy array
         x4=create_cube(conv_float32(x3.data),x3)
         # Add a cell method to describe the time filter
@@ -3135,6 +3163,69 @@ class CubeDiagnostics(object):
         print('fileout: {0!s}'.format(fileout))
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.mltt,fileout)
+
+    def f_sea_water_potential_density(self,pref=0):
+        """Calculate sea water potential density using Gibbs TEOS-10 routine.
+
+        Assumes tsc (conservative temperature) and sa (absolute
+        salinity) hav already been loaded, in
+        self.data_in['tsc_LEVEL'] and self.data_in['sa_LEVEL'].
+
+        Uses gsw.rho_CT(tsc,sa,pref) where pref is reference sea water
+        pressure in dbar.
+
+        Choose <method> to calculate mixed layer depth.
+
+        Method 1 (default).  Assumes do not have explicit values of
+        swp, but tsc and sa are on a grid with a depth axis (in m).
+        Depth in m is sufficiently close to sea water pressure in dbar
+        to use directly, when only considering shallow depths.
+
+        Method 2.  Assumes swp has already been loaded, in
+        self.data_in['swp_LEVEL'], and uses this in the calculation of
+        sea water potential density.
+        """
+        # Read in tsc,sa for current time block and assign to tsc,sa attributes
+        self.time1,self.time2=block_times(self,verbose=self.verbose)
+        time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x1=self.data_in['tsc_'+str(self.level)].extract(time_constraint)
+            x2=self.data_in['sa_'+str(self.level)].extract(time_constraint)
+        self.tsc=x1.concatenate_cube()
+        self.sa=x2.concatenate_cube()
+        tsc=self.tsc.data
+        sa=self.sa.data
+        # Get sea water pressure
+        #if method==1:
+        #    # Use depth (m) as surrogate for sea water pressure (dbar)
+        #    lev_coord=self.tsc.coord('depth')
+        #    if lev_coord.units!='m':
+        #        raise UserWarning('Depth coordinate must be in m.')
+        #    swp=lev_coord.points
+        #elif method==2:
+        #    # Explicitly read sea water pressure data
+        #    with iris.FUTURE.context(cell_datetime_objects=True):
+        #        x3=self.data_in['swp_'+str(self.level)].extract(time_constraint)
+        #    self.swp=x3.concatenate_cube()
+        #    if self.swp.units!='dbar':
+        #        raise UserWarning('Sea water pressure must be in dbar.')
+        #    swp=self.swp.data
+        # Calculate seawater potential density
+        swpd=gsw.rho_CT_exact(sa,tsc,pref)
+        # Create iris cube of swp
+        var_name='swpd'
+        self.swpd=create_cube(conv_float32(swpd),self.tsc,new_var_name=var_name)
+        self.swpd.units='kg m-3'
+        # Add cell method to describe calculation of sea water potential density
+        cm=iris.coords.CellMethod('point','depth',comments='swpd calculated using gsw.rho_CT_exact in f_sea_water_potential_density: pref='+str(pref))
+        self.swpd.add_cell_method(cm)
+        # Save cube
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.swpd,fileout)
+
 
     def f_vrtbudget(self,level_below,level,level_above):
         """Calculate and save terms in vorticity budget at pressure level.

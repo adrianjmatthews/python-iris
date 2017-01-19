@@ -1,18 +1,20 @@
 """Interpolate data to higher time resolution using data_analysis.Interpolate."""
 
-import data_analysis as da
+import datetime
+
 import iris
 import iris.quickplot as qplt
 import matplotlib.pyplot as plt
-import datetime
+
+import data_analysis as da
 
 BASEDIR='/gpfs/afm/matthews/data/'
 
-VAR_NAME='sst'; LEVEL=1; SOURCE1='sstrey_sfc_w'; SOURCE2='sstrey_sfc_d'
+VAR_NAME='sst'; LEVEL=1; SOURCE1='sstrey_sfc_7d'; SOURCE2='sstrey_sfc_d'
 
-YEAR_BEG=1981; YEAR_END=2016
+YEAR_BEG=2016; YEAR_END=2016
 
-PLOT=False
+PLOT=True
 
 VERBOSE=2
 
@@ -24,14 +26,12 @@ descriptor['var_name']=VAR_NAME
 descriptor['level']=LEVEL
 descriptor['source1']=SOURCE1
 descriptor['source2']=SOURCE2
-descriptor['basedir']='/gpfs/afm/matthews/data/'
 descriptor['file_data_in']=descriptor['basedir']+descriptor['source1']+\
           '/std/'+descriptor['var_name']+'_'+str(descriptor['level'])+\
           '_????.nc'
 descriptor['file_data_out']=descriptor['basedir']+descriptor['source2']+\
           '/std/'+descriptor['var_name']+'_'+str(descriptor['level'])+\
           '_????.nc'
-
 
 # Create instance of Interpolate object
 aa=da.Interpolate(descriptor,verbose=VERBOSE)

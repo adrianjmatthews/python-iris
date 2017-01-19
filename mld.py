@@ -7,9 +7,7 @@ import data_analysis as da
 
 BASEDIR='/gpfs/afm/matthews/data/'
 
-VAR_NAME='tsc'; LEVEL='all'; SOURCE='sg579m031oi01_zlev_h'
-
-FILEPRE='' # e.g., '', '_rac', '_rac_f20_200', '_rac_rm5_n5'
+LEVEL='all'; SOURCE='sg613m031oi01_zlev_h'
 
 YEAR_BEG=2016; YEAR_END=2016
 MONTH1=MONTH2=-999 # Set both MONTH1 and MONTH2 to same (irrelevant) value if outfile_frequency is 'year'
@@ -24,15 +22,13 @@ VERBOSE=2
 descriptor={}
 descriptor['basedir']=BASEDIR
 descriptor['source']=SOURCE
-descriptor['var_name']=VAR_NAME
 descriptor['level']=LEVEL
-descriptor['filepre']=FILEPRE
 
 # Create instance of CubeDiagnostics object
 aa=da.CubeDiagnostics(descriptor,verbose=VERBOSE)
 
 # Lazy read data: tsc
-aa.f_read_data('tsc')
+aa.f_read_data('tsc','all')
 
 for year in range(YEAR_BEG,YEAR_END+1):
     for month in range(MONTH1,MONTH2+1):
