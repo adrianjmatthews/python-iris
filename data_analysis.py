@@ -426,6 +426,27 @@ def replace_wildcard_with_time(aa,string1):
 
 #==========================================================================
 
+def iter_generator(input):
+    """Convert <input> to an iterator and return it.
+
+    If <input> is an integer, convert it to a list so it can be
+    iterated over.  Otherwise, return unchanged.
+
+    Typically, YEAR or MONTH is passed to this function.  They may
+    already be in the form of a range-type iterator, or just a single
+    integer value.  This function converts the single integer value to
+    an iterator.  """
+
+    if type(input)==type(1979):
+        # input is an integer.  Convert to a list
+        output=[input]
+    else:
+        # Return input unchanged
+        output=input
+    return output
+
+#==========================================================================
+
 class TimeDomain(object):
 
     """A set of single or paired (start,end) times.
@@ -919,6 +940,10 @@ class DataConverter(object):
         self.cube.rename(self.name)
         self.cube.var_name=self.var_name
         self.cube.coord('time').bounds=None
+        self.cube.attributes['data_source']=self.data_source
+        self.cube.attributes['level_type']=self.level_type
+        self.cube.attributes['frequency']=self.frequency
+        self.cube.attributes['outfile_frequency']=self.outfile_frequency
         #
         # BoBBLE OI glider data from Ben Webber
         if self.data_source[:2]=='sg' and self.data_source[6:]=='031oi01':
