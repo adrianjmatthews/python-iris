@@ -135,14 +135,14 @@ def source_info(aa):
     # Split source attribute string using underscores as separators
     xx=aa.source.split('_')
     if len(xx)!=3:
-        raise UserWarning("source attribute '{0.source!s}' must have three parts separated by underscores".format(aa))
+        raise RuntimeError("source attribute '{0.source!s}' must have three parts separated by underscores".format(aa))
     aa.data_source=xx[0]
     aa.level_type=xx[1]
     aa.frequency=xx[2]
     # Check data_source attribute is valid
     valid_data_sources=['erainterim','ncepdoe','ncepncar','olrcdr','olrinterp','sg579m031oi01','sg534m031oi01','sg532m031oi01','sg620m031oi01','sg613m031oi01','sgallm031oi01','sstrey','trmm3b42v7','tropflux']
     if aa.data_source not in valid_data_sources:
-        raise UserWarning('data_source {0.data_source!s} not vaild'.format(aa))
+        raise ValueError('data_source {0.data_source!s} not valid'.format(aa))
     # Set outfile_frequency attribute depending on source information
     if aa.source in ['erainterim_plev_6h','ncepdoe_plev_6h','ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_7d','sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h','sgallm031oi01_zlev_h','sstrey_sfc_d','tropflux_sfc_d']:
         aa.outfile_frequency='year'
@@ -151,7 +151,7 @@ def source_info(aa):
         aa.outfile_frequency='month'
         aa.wildcard='??????'
     else:
-        raise UserWarning('Need to specify outfile_frequency for this data source.')
+        raise ValueError('Need to specify outfile_frequency for this data source.')
     # timedelta attribute
     if aa.frequency[-1]=='h':
         if aa.frequency=='h':
@@ -164,7 +164,7 @@ def source_info(aa):
         else:
             aa.timedelta=datetime.timedelta(days=int(aa.frequency[:-1]))
     else:
-        raise UserWarning('Need to code up for different frequency attribute.')
+        raise ToDoError('Need to code up for different frequency attribute.')
             
     # Printed output
     if aa.verbose:
@@ -298,7 +298,7 @@ def create_cube(array,oldcube,new_axis=False,new_var_name=False):
         # new_axis is False.
         # Check that array and oldcube have same dimensions
         if array.shape!=oldcube.shape:
-            raise UserWarning('Shape of array and oldcube must match.')
+            raise ValueError('Shape of array and oldcube must match.')
         # Create a list of two-lists, each of form [dim_coord,index]
         kdim=0
         dim_coords=[]
@@ -383,7 +383,7 @@ def block_times(aa,verbose=False):
         else:
             time2=datetime.datetime(aa.year+1,1,1)-timedelta_second
     else:
-        raise UserWarning("Need to write code for other outfile_frequency.")
+        raise ToDoError("Need to write code for other outfile_frequency.")
     if verbose:
         ss=h2a+'time1: {0!s} \n'+\
             'time2: {1!s} \n'+h2b
@@ -418,7 +418,7 @@ def replace_wildcard_with_time(aa,string1):
     elif aa.outfile_frequency=='month':
         x2=str(aa.year)+str(aa.month).zfill(2)
     else:
-        raise UserWarning('Need to code up for different outfile_frequency')
+        raise ToDoError('Need to code up for different outfile_frequency')
     # Replace wild card characters
     string2=string1.replace(aa.wildcard,x2)
 
@@ -444,6 +444,16 @@ def iter_generator(input):
         # Return input unchanged
         output=input
     return output
+
+#==========================================================================
+
+class ToDoError(ValueError):
+    """An exception that indicates I need to write some more code.
+
+    Use raise ToDoError as a placeholder for code to be written for a
+    different situation."""
+
+    pass
 
 #==========================================================================
 
@@ -800,7 +810,7 @@ class DataConverter(object):
             if len(self.mask.shape)!=3 and self.mask.shape[0]!=1:
                 # Mask should be 2-D (eg lat,lon) but with a third time
                 # dimension of length 1
-                raise UserWarning('Expecting 3-d mask of shape (1,?,?)')
+                raise ValueError('Expecting 3-d mask of shape (1,?,?)')
             if self.source=='sstrey_sfc_7d':
                 self.mask=1-self.mask # Switch the 1's and 0's
         if self.verbose:
@@ -852,7 +862,7 @@ class DataConverter(object):
             elif 1990<=self.year:
                 self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.wkmean.1990-present.nc')
             else:
-                raise UserWarning('Invalid year')
+                raise ValueError('Invalid year')
         elif self.source in ['trmm3b42v7_sfc_3h']:
             # Inconsistent file naming from NASA DISC
             # 1998-1999 and 2011-2016 files end in .7.nc
@@ -863,7 +873,7 @@ class DataConverter(object):
             if self.var_name=='lhfd':
                 self.filein1=os.path.join(self.basedir,self.source,'raw','lhf_tropflux_1d_'+str(self.year)+'.nc')
         else:
-            raise UserWarning('Data source not recognised')
+            raise ValueError('Data source not recognised')
         #
         # Set level constraint (set to False if none)
         if self.data_source in ['erainterim'] and self.level_type=='plev':
@@ -873,7 +883,7 @@ class DataConverter(object):
         elif self.source in ['ncepncar_sfc_d','olrcdr_toa_d','olrinterp_toa_d','sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h','sstrey_sfc_7d','trmm3b42v7_sfc_3h','tropflux_sfc_d']:
             level_constraint=False
         else:
-            raise UserWarning('Set an instruction for level_constraint.')
+            raise ToDoError('Set an instruction for level_constraint.')
         #
         # Set raw_name of variable in raw input data
         self.raw_name=self.name
@@ -912,7 +922,7 @@ class DataConverter(object):
         if self.file_mask:
             print('Applying mask')
             if self.cube.dim_coords[0].name()!='time':
-                raise UserWarning('First dimension of cube needs to be time.')
+                raise ValueError('First dimension of cube needs to be time.')
             # Broadcast ntime copies of mask (1,?,?) to (ntime,?,?)
             ntime=self.cube.shape[0]
             ngrid=self.mask.shape[1]*self.mask.shape[2]
@@ -958,7 +968,7 @@ class DataConverter(object):
             #tc=self.cube.coord('time')
             #time0_val=tc.points[0]
             #if time0_val!=int(time0_val):
-            #    raise UserWarning('Need a integer value to start with.')
+            #    raise ValueError('Need a integer value to start with.')
             #time0_datetime=tc.units.num2date(time0_val)
             #new_time_units='hours since '+str(time0_datetime)
             #ntime=tc.points.shape[0]
@@ -1004,7 +1014,7 @@ class DataConverter(object):
             tcoord=self.cube.coord('time')
             time_units=tcoord.units
             if 'day' not in time_units.name:
-                raise UserWarning('Expecting time units in days.')
+                raise ValueError('Expecting time units in days.')
             time_val=tcoord.points+3
             tcoord2=iris.coords.DimCoord(time_val,standard_name='time',units=time_units)
             if self.verbose==2:
@@ -1022,7 +1032,7 @@ class DataConverter(object):
             tcoord=self.cube.coord('time')
             time_units=tcoord.units
             if 'day' not in time_units.name:
-                raise UserWarning('Expecting time units in days.')
+                raise ValueError('Expecting time units in days.')
             # Cannot simply subtract 0.5 because of round off, leading to later errors
             # e.g., time value on 1 Jan 2016 is 24105.999999999534 not 24105.5
             # Use divmod to achieve same end
@@ -1072,7 +1082,7 @@ class DataConverter(object):
         elif self.outfile_frequency=='month':
             self.fileout1=os.path.join(self.basedir,self.source,'std/',self.var_name+'_'+str(self.level)+'_'+str(self.year)+str(self.month).zfill(2)+'.nc')
         else:
-            raise UserWarning("Need to write code for this outfile_frequency.")
+            raise ToDoError("Need to write code for this outfile_frequency.")
         # Write cube
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.cube,self.fileout1)
@@ -1167,7 +1177,7 @@ class TimeDomStats(object):
         # Check that time domain is of type 'event'
         self.tdomain.time_domain_type()
         if self.tdomain.type!='event':
-            raise UserWarning("Warning: time domain type is '{0.tdomain.type}'.  It must be 'event'.".format(self))
+            raise ValueError("Warning: time domain type is '{0.tdomain.type}'.  It must be 'event'.".format(self))
         # Loop over events in time domain
         cube_event_means=iris.cube.CubeList([])
         cube_event_ntimes=[]
@@ -1255,7 +1265,7 @@ class TimeDomStats(object):
         # Check that time domain is of type 'single'
         self.tdomain.time_domain_type()
         if self.tdomain.type!='single':
-            raise UserWarning("Warning: time domain type is '{0.tdomain.type}'.  It must be 'single'.".format(self))
+            raise ValueError("Warning: time domain type is '{0.tdomain.type}'.  It must be 'single'.".format(self))
         # Set lags and nlags attributes
         self.lags=lags
         self.nlags=len(lags)
@@ -1479,7 +1489,7 @@ class TimeFilter(object):
         elif self.frequency=='h':
             self.timedelta=datetime.timedelta(hours=self.nn)
         else:
-            raise UserWarning('data time interval is not days or hours - need more code!')
+            raise ToDoError('data time interval is not days or hours - need more code!')
         if self.verbose:
             print(self)        
 
@@ -1525,7 +1535,7 @@ class TimeFilter(object):
         self.nweights=len(lines2)
         # Check nweights is odd
         if divmod(self.nweights,2)[1]!=1:
-            raise UserWarning('Error: self.nweights must be odd.')
+            raise ValueError('Error: self.nweights must be odd.')
         self.nn=divmod(self.nweights,2)[0]
         weights=[float(xx) for xx in lines2]
         self.weights=np.array(weights)
@@ -1544,7 +1554,7 @@ class TimeFilter(object):
         elif self.outfile_frequency=='month':
             self.fileout1=self.filein1.replace(self.wildcard,self.filter+'_'+str(self.year)+str(self.month).zfill(2))
         else:
-            raise UserWarning('outfile_frequency not recognised')
+            raise ValueError('outfile_frequency not recognised')
         if self.verbose==2:
             ss=h2a+'timein1: {0.timein1!s} \n'+\
                 'timeout1: {0.timeout1!s} \n'+\
@@ -1691,7 +1701,7 @@ class TimeAverage(object):
                 timec1+=timedelta_day
             x11=x10.merge_cube()
         else:
-            raise UserWarning('Need code to average over something other than daily.')
+            raise ToDoError('Need code to average over something other than daily.')
         # Convert units for selected data sources
         if self.source1 in ['trmm3b42v7_sfc_3h',] and self.source2 in ['trmm3b42v7_sfc_d',]:
             print("Converting TRMM precipitation from 3-hourly in 'mm hr-1' to daily mean in 'mm day-1'")
@@ -1703,7 +1713,7 @@ class TimeAverage(object):
         elif self.outfile_frequency=='month':
             x2=str(self.year)+str(self.month).zfill(2)
         else:
-            raise UserWarning('outfile_frequency not recognised')
+            raise ValueError('outfile_frequency not recognised')
         self.fileout1=os.path.join(self.basedir,self.source2,'std',self.var_name+'_'+str(self.level)+'_'+x2+'.nc')
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.cube_out,self.fileout1)
@@ -1790,7 +1800,7 @@ class Interpolate(object):
                 time_diff=1
                 self.sample_points=[('time',np.arange(self.time1_out_val,self.time2_out_val,time_diff))]
             else:
-                raise UserWarning('Need code for time units that are not in days.')
+                raise ToDoError('Need code for time units that are not in days.')
             # Create cube (from cube list) of input data for interpolation
             # Times interval for this cube must completely contain the
             #   output interval (time_val1 to time_val2) for interpolation,
@@ -1824,7 +1834,7 @@ class Interpolate(object):
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.cube_out,fileout)
         else:
-            raise UserWarning('Need code for interpolation to other than daily data.')
+            raise ToDoError('Need code for interpolation to other than daily data.')
         
 
 #==========================================================================
@@ -1906,7 +1916,7 @@ class Hovmoller(object):
         elif self.band_name=='longitude':
             band_constraint=iris.Constraint(longitude=lambda cell: self.band_val1 <=cell<= self.band_val2)
         else:
-            raise UserWarning('Invalid band_name.')
+            raise ValueError('Invalid band_name.')
         with iris.FUTURE.context(cell_datetime_objects=True):
             x1=self.data_in.extract(time_constraint & band_constraint)
         x2=x1.concatenate_cube()
@@ -2254,7 +2264,7 @@ class AnnualCycle(object):
         """
         raise DeprecationWarning('Use f_anncycle_raw instead')
         if self.frequency!='d':
-            raise UserWarning('Annual cycle presently only coded up for daily data.')
+            raise ToDoError('Annual cycle presently only coded up for daily data.')
         # Set first day as 1 Jan year 1 (time coord will be relative to this)
         time_first=datetime.datetime(year=1,month=1,day=1)
         # Set current time to be 1 Jan year 1.
@@ -2317,7 +2327,7 @@ class AnnualCycle(object):
         
         """
         if self.frequency!='d':
-            raise UserWarning('Annual cycle presently only coded up for daily data.')
+            raise ToDoError('Annual cycle presently only coded up for daily data.')
         kyear=0
         # First year
         yearc=self.year1
@@ -2350,7 +2360,7 @@ class AnnualCycle(object):
             # to 31 Dec 1978.  Just use data from 1979 onwards to calculate
             # annual cycle
             if self.data_source=='olrinterp' and yearc==1978:
-                raise UserWarning('Cannot use 1978 for olrinterp because of missing data.')
+                raise ValueError('Cannot use 1978 for olrinterp because of missing data.')
             # Extract 1 Jan to 28 Feb of current year
             time1=datetime.datetime(yearc,1,1)
             time2=datetime.datetime(yearc,2,28)
@@ -2480,7 +2490,7 @@ class AnnualCycle(object):
         # Create a new array of zeros, then overwrite the data in this
         x6=np.zeros(shape1)
         if len(shape1)>4:
-            raise UserWarning('Code not able to cope with lat,lon,lev data!')
+            raise ValueError('Code not able to cope with lat,lon,lev data!')
         else:
             for ii in range(ntime):
                 for kk in range(self.nharm):
@@ -2669,7 +2679,7 @@ class AnnualCycle(object):
             with iris.FUTURE.context(netcdf_promote=True):
                 self.data_anncycle_rm=iris.load(self.file_anncycle_rm,self.name)
         else:
-            raise UserWarning('Need code for other outfile_frequency values.')
+            raise ToDoError('Need code for other outfile_frequency values.')
 
     def f_read_subtract_anncycle(self):
         """Read previously calculatedanomaly data (annual cycle subtracted).
@@ -2715,7 +2725,7 @@ class GliderMission(object):
             self.time1=datetime.datetime(2016,6,30)
             self.time2=datetime.datetime(2016,7,21)
         else:
-            raise UserWarning('Invalid mission')
+            raise ValueError('Invalid mission')
         # self.gliders is a dictionary of glider objects
         self.gliders={}
         for gliderid in self.gliderids:
@@ -3128,7 +3138,7 @@ class CubeDiagnostics(object):
             # Extract 'surface temperature' as temperature at smallest depth.
             lev_coord=self.tsc.coord('depth')
             if lev_coord.points[0]>lev_coord.points[-1]:
-                raise UserWarning('Depth coordinate must be increasing, not decreasing.')
+                raise ValueError('Depth coordinate must be increasing, not decreasing.')
             lev_con=iris.Constraint(depth=zzsfc)
             tsfc=tsc.extract(lev_con)
             # Create field of T* = (surface temperature minus deltatsc)
@@ -3225,7 +3235,7 @@ class CubeDiagnostics(object):
         #    # Use depth (m) as surrogate for sea water pressure (dbar)
         #    lev_coord=self.tsc.coord('depth')
         #    if lev_coord.units!='m':
-        #        raise UserWarning('Depth coordinate must be in m.')
+        #        raise ValueError('Depth coordinate must be in m.')
         #    swp=lev_coord.points
         #elif method==2:
         #    # Explicitly read sea water pressure data
@@ -3233,7 +3243,7 @@ class CubeDiagnostics(object):
         #        x3=self.data_in['swp_'+str(self.level)].extract(time_constraint)
         #    self.swp=x3.concatenate_cube()
         #    if self.swp.units!='dbar':
-        #        raise UserWarning('Sea water pressure must be in dbar.')
+        #        raise ValueError('Sea water pressure must be in dbar.')
         #    swp=self.swp.data
         # Calculate seawater potential density
         swpd=gsw.rho_CT_exact(sa,tsc,pref)
@@ -3375,7 +3385,7 @@ class CubeDiagnostics(object):
             vrt_time_minus1[0,...]=self.vrt_level_time_before
             vrt_time_plus1[-1,...]=self.vrt_level_time_after
         else:
-            raise UserWarning('Code up for time index other than 0')
+            raise ToDoError('Code up for time index other than 0')
         # Find dvrtdt from centered differences
         deltatime_seconds=self.timedelta.total_seconds()
         print('deltatime_seconds: {0!s}'.format(deltatime_seconds))
