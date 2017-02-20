@@ -68,6 +68,16 @@ h2b='--------------------------->>>\n'
 #   cube1.rename(cube2.name())
 #   cube1.var_name=cube2.var_name
 var_name2long_name={
+    'bsiso1-1':'BSISO_1-1_index',
+    'bsiso1-2':'BSISO_1-2_index',
+    'bsiso1-amp':'BSISO_1_amplitude',
+    'bsiso1-cat':'BSISO_1_category',
+    'bsiso1-theta':'BSISO_1_phase_angle',
+    'bsiso2-1':'BSISO_2-1_index',
+    'bsiso2-2':'BSISO_2-2_index',
+    'bsiso2-amp':'BSISO_2_amplitude',
+    'bsiso2-cat':'BSISO_2_category',
+    'bsiso2-theta':'BSISO_2_phase_angle',
     'chi':'atmosphere_horizontal_velocity_potential',
     'div':'divergence_of_wind',
     'domegady_duwnddp':'meridional_derivative_of_lagrangian_tendency_of_air_pressure_times_pressure_derivative_of_zonal_wind',
@@ -433,10 +443,9 @@ def iter_generator(input):
     iterated over.  Otherwise, return unchanged.
 
     Typically, YEAR or MONTH is passed to this function.  They may
-    already be in the form of a range-type iterator, or just a single
+    already be in the form of a range-type iterator or a list, or just a single
     integer value.  This function converts the single integer value to
-    an iterator.  """
-
+    an iterator (a list).  """
     if type(input)==type(1979):
         # input is an integer.  Convert to a list
         output=[input]
@@ -444,6 +453,62 @@ def iter_generator(input):
         # Return input unchanged
         output=input
     return output
+
+#==========================================================================
+
+def lat_direction(cube_in,direction,verbose=True):
+    """Make cube latitude run north to south or south to north.
+
+    Inputs:
+
+    <cube_in> is an iris cube
+
+    <direction> is a string, either 's2n' or 'n2s'
+
+    Use iris.util.reverse if needed.
+
+    Return <cube_out>, whose latitude axis runs according to
+    <direction>.
+    """
+    # Check direction is valid
+    if direction not in ['s2n','n2s']:
+        raise ValueError('Direction is invalid.')
+    # Find direction of latitude coordinate of input cube
+    lat_coord=cube_in.coord('latitude')
+    lat_beg=lat_coord.points[0]
+    lat_end=lat_coord.points[-1]
+    if lat_beg<lat_end:
+        input_direction='s2n'
+    else:
+        input_direction='n2s'
+    # If input cube does not have desired latitude direction, reverse it
+    if direction!=input_direction:
+        # Find index of latitude coordinate
+        dim_coord_names=[xx.var_name for xx in cube_in.dim_coords]
+        lat_index=dim_coord_names.index('latitude')
+        # Reverse latitude
+        cube_out=iris.util.reverse(cube_in,lat_index)
+        # Check direction of output cube
+        lat_coord=cube_out.coord('latitude')
+        lat_beg=lat_coord.points[0]
+        lat_end=lat_coord.points[-1]
+        if lat_beg<lat_end:
+            output_direction='s2n'
+        else:
+            output_direction='n2s'
+        if direction!=output_direction:
+            raise ValueError('Ouput direction does not match direction.')
+    # Printed output
+    if verbose:
+        ss=h2a+'name: {4!s} \n'+\
+            'lat_direction. \n'+\
+            'direction, input_direction: {0!s}, {1!s} \n'+\
+            'lat_index: {2!s} \n'+\
+            'direction, output_direction: {0!s}, {3!s} \n'+h2b
+        print(ss.format(direction,input_direction,lat_index,output_direction,cube_in.name()))
+
+    return cube_out
+    
 
 #==========================================================================
 
@@ -2058,7 +2123,13 @@ class Wind(object):
             return 'Wind instance'
 
     def f_wind(self):
-        """Calculate and save streamfunction etc."""
+        """Calculate and save streamfunction etc.
+
+        windspharm methods always return output with latitude running
+        from north to south.  If input data runs south to north,
+        switch the output data to also run from south to north, with
+        lat_direction.
+        """
         # Set current time range
         self.time1,self.time2=block_times(self,verbose=self.verbose)
         # Read uwnd and vwnd for current time range
@@ -2068,6 +2139,15 @@ class Wind(object):
             x2=self.data_vwnd.extract(time_constraint)
         self.uwnd=x1.concatenate_cube()
         self.vwnd=x2.concatenate_cube()
+        # Find value of south2north
+        lat_coord=self.uwnd.coord('latitude')
+        lat_beg=lat_coord.points[0]
+        lat_end=lat_coord.points[-1]
+        if lat_beg<lat_end:
+            self.south2north=True
+        else:
+            self.south2north=True
+        print('lat_beg, lat_end, south2north: {0!s}, {1!s}, {2!s} '.format(lat_beg,lat_end,self.south2north))
         # Create VectorWind instance
         self.ww=VectorWind(self.uwnd,self.vwnd)
         # Both psi and chi
@@ -2075,6 +2155,9 @@ class Wind(object):
             self.psi,self.chi=self.ww.sfvp()
             self.psi.var_name=self.var_name_psi
             self.chi.var_name=self.var_name_chi
+            if self.south2north:
+                self.psi=lat_direction(self.psi,'s2n')
+                self.chi=lat_direction(self.chi,'s2n')
             fileout1=replace_wildcard_with_time(self,self.file_data_psi)
             fileout2=replace_wildcard_with_time(self,self.file_data_chi)
             print('fileout1: {0!s}'.format(fileout1))
@@ -2086,6 +2169,8 @@ class Wind(object):
         elif self.flag_psi:
             self.psi=self.ww.streamfunction()
             self.psi.var_name=self.var_name_psi
+            if self.south2north:
+                self.psi=lat_direction(self.psi,'s2n')
             fileout=replace_wildcard_with_time(self,self.file_data_psi)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
@@ -2094,6 +2179,8 @@ class Wind(object):
         elif self.flag_chi:
             self.chi=self.ww.velocitypotential()
             self.chi.var_name=self.var_name_chi
+            if self.south2north:
+                self.chi=lat_direction(self.chi,'s2n')
             fileout=replace_wildcard_with_time(self,self.file_data_chi)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
@@ -2103,6 +2190,9 @@ class Wind(object):
             self.vrt,self.div=self.ww.vrtdiv()
             self.vrt.var_name=self.var_name_vrt
             self.div.var_name=self.var_name_div
+            if self.south2north:
+                self.vrt=lat_direction(self.vrt,'s2n')
+                self.div=lat_direction(self.div,'s2n')
             fileout1=replace_wildcard_with_time(self,self.file_data_vrt)
             fileout2=replace_wildcard_with_time(self,self.file_data_div)
             print('fileout1: {0!s}'.format(fileout1))
@@ -2114,6 +2204,8 @@ class Wind(object):
         elif self.flag_vrt:
             self.vrt=self.ww.vorticity()
             self.vrt.var_name=self.var_name_vrt
+            if self.south2north:
+                self.vrt=lat_direction(self.vrt,'s2n')
             fileout=replace_wildcard_with_time(self,self.file_data_vrt)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
@@ -2122,6 +2214,8 @@ class Wind(object):
         elif self.flag_div:
             self.div=self.ww.divergence()
             self.div.var_name=self.var_name_div
+            if self.south2north:
+                self.div=lat_direction(self.div,'s2n')
             fileout=replace_wildcard_with_time(self,self.file_data_div)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
@@ -2130,11 +2224,12 @@ class Wind(object):
         if self.flag_wndspd:
             self.wndspd=self.ww.magnitude()
             self.wndspd.var_name=self.var_name_wndspd
+            if self.south2north:
+                self.wndspd=lat_direction(self.wndspd,'s2n')
             fileout=replace_wildcard_with_time(self,self.file_data_wndspd)
             print('fileout: {0!s}'.format(fileout))
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.wndspd,fileout)
-            
 
 #==========================================================================
 
@@ -3049,7 +3144,7 @@ class CubeDiagnostics(object):
         else:
             return 'CubeDiagnostics instance'
 
-    def f_read_data(self,var_name,level):
+    def f_read_data(self,var_name,level,verbose=False):
         """Lazy read cube(s) of var_name at level for current time block.
 
         Add entry to the dictionary attributes self.filein and
@@ -3059,7 +3154,7 @@ class CubeDiagnostics(object):
         self.filein[var_name+'_'+str(level)]=os.path.join(self.basedir,self.source,'std',var_name+'_'+str(level)+'_'+self.wildcard+'.nc')
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in[var_name+'_'+str(level)]=iris.load(self.filein[var_name+'_'+str(level)],name)
-        if self.verbose:
+        if verbose:
             ss=h2a+'f_read_data \n'+\
                 'var_name: {0!s} \n'+\
                 'filein: {1.filein!s} \n'+\
@@ -3282,6 +3377,16 @@ class CubeDiagnostics(object):
 
         Calculate and create attributes:
 
+        self.south2north: True if latitude coordinate of input data
+        (taken as self.data_in['uwnd_<level>']) runs from south to
+        north, False otherwise.  The windspharm methods (horizontal
+        gradients and calculation of ff and beta) need cubes to run
+        from north to south, and convert them if they do not.  Cube
+        output from windspharm running from north to south can then
+        not be combined (added) with cubes running from south to
+        north.  So convert cube output from windspharm to run from
+        south to north if self.south2north is True.
+
         self.dvrtdt (d zeta/dt) by centred differences
 
         self.m_uwnd_dvrtdx (-u d zeta/dx)
@@ -3332,6 +3437,16 @@ class CubeDiagnostics(object):
         self.vrt_level_above=x9.concatenate_cube()
         self.omega_level=x10.concatenate_cube()
         self.div_level=x11.concatenate_cube()
+        #
+        # Find value of south2north
+        lat_coord=self.uwnd_level.coord('latitude')
+        lat_beg=lat_coord.points[0]
+        lat_end=lat_coord.points[-1]
+        if lat_beg<lat_end:
+            self.south2north=True
+        else:
+            self.south2north=True
+        print('lat_beg, lat_end, south2north: {0!s}, {1!s}, {2!s} '.format(lat_beg,lat_end,self.south2north))
         #
         ### Calculate dvrtdt
         # Try to read vrt for timestep before beginning of current time block
@@ -3416,6 +3531,9 @@ class CubeDiagnostics(object):
         ### Calculate m_uwnd_dvrtdx and m_vwnd_dvrtdx
         ww=VectorWind(self.uwnd_level,self.vwnd_level)
         dvrtdx,dvrtdy=ww.gradient(self.vrt_level)
+        if self.south2north:
+            dvrtdx=lat_direction(dvrtdx,'s2n')
+            dvrtdy=lat_direction(dvrtdy,'s2n')
         m_uwnd_dvrtdx=-1*self.uwnd_level*dvrtdx
         m_vwnd_dvrtdy=-1*self.vwnd_level*dvrtdy
         # m_uwnd_dvrtdx attributes
@@ -3478,6 +3596,8 @@ class CubeDiagnostics(object):
         #
         ### Calculate m_ff_div
         ff=ww.planetaryvorticity()
+        if self.south2north:
+            ff=lat_direction(ff,'s2n')
         m_ff_div=-1*ff*self.div_level
         m_ff_div.data=conv_float32(m_ff_div.data)
         # Attributes
@@ -3495,6 +3615,8 @@ class CubeDiagnostics(object):
         #
         ### Calculate m_beta_vwnd
         dummy,beta=ww.gradient(ff)
+        if self.south2north:
+            beta=lat_direction(beta,'s2n')
         m_beta_vwnd=-1*beta*self.vwnd_level
         # Attributes
         var_name='m_beta_vwnd'
@@ -3511,6 +3633,9 @@ class CubeDiagnostics(object):
         #
         ### Calculate m_domegadx_dvwnddp
         domegadx,domegady=ww.gradient(self.omega_level)
+        if self.south2north:
+            domegadx=lat_direction(domegadx,'s2n')
+            domegady=lat_direction(domegady,'s2n')
         dvwnddp=(self.vwnd_level_below-self.vwnd_level_above)/deltap
         m_domegadx_dvwnddp=-1*domegadx*dvwnddp
         m_domegadx_dvwnddp.data=conv_float32(m_domegadx_dvwnddp.data)
