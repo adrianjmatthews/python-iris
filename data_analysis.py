@@ -44,7 +44,7 @@ from windspharm.iris import VectorWind
 
 import mypaths
 
-# Header for use in calls to print
+# Headers for use in calls to print
 h1a='<<<=============================================================\n'
 h1b='=============================================================>>>\n'
 h2a='<<<---------------------------\n'
@@ -102,6 +102,10 @@ var_name2long_name={
     'psi':'atmosphere_horizontal_streamfunction',
     'pv':'ertel_potential_vorticity',
     'res_dvrtdt':'residual_tendency_of_atmosphere_relative_vorticity',
+    'rmm1':'RMM_1_index',
+    'rmm2':'RMM_2_index',
+    'rmm_amp':'RMM_amplitude',
+    'rmm_cat':'RMM_category',
     'sa':'sea_water_absolute_salinity',
     'shum':'specific_humidity',
     'source_dvrtdt':'total_source_of_tendency_of_atmosphere_relative_vorticity',
@@ -154,7 +158,7 @@ def source_info(aa):
     if aa.data_source not in valid_data_sources:
         raise ValueError('data_source {0.data_source!s} not valid'.format(aa))
     # Set outfile_frequency attribute depending on source information
-    if aa.source in ['erainterim_plev_6h','ncepdoe_plev_6h','ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_7d','sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h','sgallm031oi01_zlev_h','sstrey_sfc_d','tropflux_sfc_d']:
+    if aa.source in ['erainterim_plev_6h','erainterim_plev_d','ncepdoe_plev_6h','ncepdoe_plev_d','ncepncar_sfc_d','ncepncar_plev_d','olrcdr_toa_d','olrinterp_toa_d','sstrey_sfc_7d','sg579m031oi01_zlev_h','sg534m031oi01_zlev_h','sg532m031oi01_zlev_h','sg620m031oi01_zlev_h','sg613m031oi01_zlev_h','sgallm031oi01_zlev_h','sstrey_sfc_d','tropflux_sfc_d']:
         aa.outfile_frequency='year'
         aa.wildcard='????'
     elif aa.source in ['trmm3b42v7_sfc_3h','trmm3b42v7_sfc_d']:
@@ -509,6 +513,35 @@ def lat_direction(cube_in,direction,verbose=True):
 
     return cube_out
     
+#==========================================================================
+
+def truncate(cube_in,truncation):
+    """Spectrally truncate (triangular truncation) iris cube."""
+
+    # Find value of south2north
+    lat_coord=cube_in.coord('latitude')
+    lat_beg=lat_coord.points[0]
+    lat_end=lat_coord.points[-1]
+    if lat_beg<lat_end:
+        south2north=True
+    else:
+        south2north=True
+    print('lat_beg, lat_end, south2north: {0!s}, {1!s}, {2!s} '.format(lat_beg,lat_end,south2north))
+    # Create spoof uwnd and vwnd cubes to initiate VectorWind instance.
+    uwnd=create_cube(cube_in.data,cube_in,new_var_name='uwnd')
+    vwnd=create_cube(cube_in.data,cube_in,new_var_name='vwnd')
+    # Create VectorWind instance
+    ww=VectorWind(uwnd,vwnd)
+    # Truncate input cube
+    cube_out=ww.truncate(cube_in,truncation=truncation)
+    # Add cell method to describe truncation
+    cm=iris.coords.CellMethod('point',coords=['latitude','longitude'],comments='truncated to T'+str(truncation))
+    cube_out.add_cell_method(cm)
+    if south2north:
+        # Output of windspharm method.  Latitude runs north to south
+        # Reverse latitude direction (to be consistent with input cube)
+        cube_out=lat_direction(cube_out,'s2n')
+    return cube_out
 
 #==========================================================================
 
@@ -1728,7 +1761,7 @@ class TimeAverage(object):
         else:
             return 'Interpolate instance'
 
-    def f_time_average(self):
+    def f_time_average(self,method=1):
         """Time average data."""
         # Extract input data for current block of time
         time1,time2=block_times(self,verbose=self.verbose)
@@ -1740,31 +1773,90 @@ class TimeAverage(object):
         
         if self.frequency=='d':
             # Creating daily average data
-            timedelta_day=datetime.timedelta(days=1)
-            timedelta_minute=datetime.timedelta(seconds=60)
-            timec1=time1
-            # Create empty CubeList
-            x10=iris.cube.CubeList([])
-            while timec1<time2:
-                # Extract data over current day
-                timec2=timec1+timedelta_day-timedelta_minute
-                print(timec1,timec2)
-                time_constraintc=iris.Constraint(time = lambda cell: timec1 <= cell <= timec2)
-                with iris.FUTURE.context(cell_datetime_objects=True):
-                    x1=self.data_in.extract(time_constraintc)
-                x2=x1.concatenate_cube()
-                # Calculate daily mean
-                x3=x2.collapsed('time',iris.analysis.MEAN)
-                # Reset auxilliary time coordinate for current day at 00 UTC
-                timec_val=time_units.date2num(timec1)
-                timec_coord=iris.coords.DimCoord(timec_val,standard_name='time',units=time_units)
-                x3.remove_coord('time')
-                x3.add_aux_coord(timec_coord)
-                # Append current daily mean to cube list
-                x10.append(x3)
-                # Increment time
-                timec1+=timedelta_day
-            x11=x10.merge_cube()
+            if method==1:
+                print('f_time_average: Method 1')
+                # Method 1 loops over days, creates a time constraint for
+                # each day, extracts data for that day, then averages for that
+                # day, then appends to a cube list, then finally merges the
+                # cube list to create a cube of daily averaged data.  It is
+                # very slow.
+                timedelta_day=datetime.timedelta(days=1)
+                timedelta_minute=datetime.timedelta(seconds=60)
+                timec1=time1
+                # Create empty CubeList
+                x10=iris.cube.CubeList([])
+                while timec1<time2:
+                    # Extract data over current day
+                    timec2=timec1+timedelta_day-timedelta_minute
+                    print(timec1,timec2)
+                    time_constraintc=iris.Constraint(time = lambda cell: timec1 <= cell <= timec2)
+                    with iris.FUTURE.context(cell_datetime_objects=True):
+                        x1=self.data_in.extract(time_constraintc)
+                    x2=x1.concatenate_cube()
+                    # Calculate daily mean
+                    x3=x2.collapsed('time',iris.analysis.MEAN)
+                    # Reset auxilliary time coordinate for current day at 00 UTC
+                    timec_val=time_units.date2num(timec1)
+                    timec_coord=iris.coords.DimCoord(timec_val,standard_name='time',units=time_units)
+                    x3.remove_coord('time')
+                    x3.add_aux_coord(timec_coord)
+                    # Append current daily mean to cube list
+                    x10.append(x3)
+                    # Increment time
+                    timec1+=timedelta_day
+                x11=x10.merge_cube()
+            elif method==2:
+                print('f_time_average: Method 2')
+                # Method 2 slices the input cube numpy array to get a
+                # different numpy array for each time of day, then
+                # adds them together, then divides by number of times
+                # of day to get daily mean. Order(1000) faster than method 1
+                # Method 2 depends on the time values being equally spaced,
+                # and there being no missing data (in time)
+                #
+                # Find time resolution of input data
+                xx=self.source1.split('_')
+                source1_frequency=xx[2]
+                if source1_frequency[-1]!='h':
+                    raise ToDoError('Need to code up for input data other than hourly.')
+                if source1_frequency=='h':
+                    npd=24
+                else:
+                    npd=int(24/int(source1_frequency[:-1]))
+                print('source1_frequency,npd: {0!s}, {1!s}'.format(source1_frequency,npd))
+                # Check input data is well formed
+                dim_coord_names=[xx.var_name for xx in self.cube_in.dim_coords]
+                time_index=dim_coord_names.index('time')
+                print('time_index: {0!s}'.format(time_index))
+                if time_index!=0:
+                    raise ToDoError('Code below only works if time is first dimension.')
+                ntime=self.cube_in.shape[time_index]
+                nday=int(ntime/npd)
+                print('ntime,nday: {0!s}, {1!s}'.format(ntime,nday))
+                if nday!=ntime/npd:
+                    raise ValueError('Input data is not integer number of days.')
+                # Slice numpy array, one slice per time of day.
+                # Then calculate daily means
+                x1=self.cube_in.data
+                x2=[x1[ii:ntime:npd,...] for ii in range(npd)]
+                x3=x2[0]
+                for xx in x2[1:]:
+                    x3+=xx
+                x4=x3/npd
+                # Create new time axis for daily mean data (00 UTC each day)
+                timec=time1
+                time_vals=[]
+                timedelta_day=datetime.timedelta(days=1)
+                while timec<time2:
+                    time_vals.append(time_units.date2num(timec))
+                    timec+=timedelta_day
+                time_coord=iris.coords.DimCoord(time_vals,standard_name='time',units=time_units)
+                # Create new cube of daily mean
+                x11=create_cube(x4,self.cube_in,new_axis=time_coord)
+                cm=iris.coords.CellMethod('point','time',comments='daily mean from f_time_mean method 2')
+                x11.add_cell_method(cm)
+            else:
+                raise ValueError('Invalid method option.')
         else:
             raise ToDoError('Need code to average over something other than daily.')
         # Convert units for selected data sources
