@@ -617,11 +617,15 @@ class TimeDomain(object):
     self.nevents : integer equivalent to length of self.lines, i.e., number
     single times or events.
 
+    self.header : tuple of two strings, each beginning with '#', that
+    are descriptors of the time domain
+
     """
     
-    def __init__(self,idx,basedir=mypaths.DIR_TDOMAIN_DEFAULT,verbose=True):
+    def __init__(self,idx,basedir=mypaths.DIR_TDOMAIN_DEFAULT,tseriesdir=mypaths.DIR_TSERIES_DEFAULT,verbose=True):
         self.idx=idx
         self.basedir=basedir
+        self.tseriesdir=tseriesdir
         self.verbose=verbose
         self.filename=os.path.join(self.basedir,self.idx+'.txt')
         self._format2ascii="%Y-%m-%d %H:%M"
@@ -666,6 +670,8 @@ class TimeDomain(object):
         else:
             # Write ascii strings
             file1=open(self.filename,'w')
+            if self.header:
+                file1.writelines(self.header)
             file1.writelines(self.lines)
             file1.close()
             if self.verbose:
@@ -803,6 +809,88 @@ class TimeDomain(object):
     def f_nevents(self):
         self.nevents=len(self.datetimes)
 
+    def f_create_time_domain_from_indices(self):
+        """Create time domain from algorithm on index time series."""
+        if len(self.idx)==10 and self.idx[:3]=='rmm':
+            # Time domains based on RMM indices
+            # Format is 'rmmXXXYYYZ' where
+            #   'XXX' is a counter e.g. '001'
+            #   'YYY' is a season e.g. 'djf', 'jja', 'n2a', 'm2o'
+            #   'Z' is the RMM category ('1' to '8')
+            counter=self.idx[3:6]
+            season=self.idx[6:9]
+            category=int(self.idx[9])
+            print('counter: {0!s}'.format(counter))
+            print('season: {0!s}'.format(season))
+            print('category: {0!s}'.format(category))
+            # Counters:
+            if counter=='001':
+                header1='# RMM amplitude >=1, time range 1 Jan 1979 to 31 Dec 2015 \n'
+                time1=datetime.datetime(1979,1,1)
+                time2=datetime.datetime(2015,12,31)
+                time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+                amp_threshold=1
+            else:
+                raise ValueError('counter is not valid.')
+            if season=='djf':
+                valid_months=[12,1,2]
+            else:
+                raise ValueError('season is not valid.')
+            if category not in list(range(1,8+1)):
+                raise ValueError('category is not valid.')
+            header2='# Season='+season+', category='+str(category)+' \n'
+            # Set header attribute for time domain
+            self.header=(header1,header2)
+            print(header1)
+            print(header2)
+            # Read input time series of RMM amplitude and category
+            source='rmm_nl_d'
+            f1=os.path.join(self.tseriesdir,source,'std','rmm_amp_-999.nc')
+            f2=os.path.join(self.tseriesdir,source,'std','rmm_cat_-999.nc')
+            with iris.FUTURE.context(netcdf_promote=True):
+                x1=iris.load_cube(f1,'RMM_amplitude')
+                x2=iris.load_cube(f2,'RMM_category')
+            # Extract data for valid time range
+            with iris.FUTURE.context(cell_datetime_objects=True):
+                x1a=x1.extract(time_constraint)
+                x2a=x2.extract(time_constraint)
+            time_coord=x1a.coord('time')
+            time_units=time_coord.units
+            # Flags indicate whether relevant time is within an event (True)
+            # or not (False)
+            flag_previous_time=False
+            flag_current_time=False
+            datetimes_list=[]
+            # Create list of datetime.datetime pairs of (start,end) dates
+            #   for events
+            # Loop over time
+            for timevalc in time_coord.points:
+                timecompc=time_units.num2date(timevalc)
+                time_constraint2=iris.Constraint(time=timevalc)
+                # Extract RMM amplitude and category at current time
+                ampc=float(x1a.extract(time_constraint2).data)
+                catc=float(x2a.extract(time_constraint2).data)
+                # Set flag for current time
+                if ampc>=amp_threshold and catc==category and timecompc.month in valid_months:
+                    flag_current_time=True
+                else:
+                    flag_current_time=False
+                print(timevalc,timecompc,ampc,catc,flag_previous_time,flag_current_time)
+                # Use flags to determine start and end points of events
+                if not flag_previous_time and flag_current_time:
+                    print('Start of event')
+                    start_event=timecompc
+                if flag_previous_time and not flag_current_time:
+                    print('End of event')
+                    end_event=timecomp_previous_time
+                    datetimes_list.append([start_event,end_event])
+                # Current time becomes previous time in next iteration
+                flag_previous_time=flag_current_time
+                timecomp_previous_time=timecompc
+            # Set datetimes attribute and write time domain
+            self.datetimes=datetimes_list
+            self.datetime2ascii()
+            self.write_ascii()
 
 #==========================================================================
 
@@ -2371,6 +2459,14 @@ class AnnualCycle(object):
     smoothed annual cycle subtracted.  Contains a wild card ????
     character, which will be replaced by, e.g., year numbers (if
     self.outfile_frequency is 'year').
+
+    self.time1: If False, calculate anomalies from annual cycle from
+    beginning of data set.  If datetime.datetime object, calculate
+    anomalies from annual cycle from this time.
+    
+    self.time2: If False, calculate anomalies from annual cycle up to
+    end of data set.  If datetime.datetime object, calculate anomalies
+    from annual cycle up to this time.
     
     """
 
@@ -2386,6 +2482,7 @@ class AnnualCycle(object):
         self.year1=descriptor['year1']
         self.year2=descriptor['year2']
         self.time1=descriptor['time1']
+        self.time2=descriptor['time2']
         self.file_data_in=os.path.join(self.basedir,self.source,'std',
               self.var_name+'_'+str(self.level)+'_'+self.wildcard+'.nc')
         self.file_anncycle_raw=os.path.join(self.basedir,self.source,
@@ -2405,10 +2502,11 @@ class AnnualCycle(object):
             x1=self.data_in[0].coord('time')[0]
             x2=x1.cell(0)[0]
             self.time1=x1.units.num2date(x2)
-        # Get last time in input data
-        x1=self.data_in[-1].coord('time')[-1]
-        x2=x1.cell(0)[0]
-        self.time2=x1.units.num2date(x2)
+        # Get last time in input data if self.time2 not externally set
+        if not self.time2:
+            x1=self.data_in[-1].coord('time')[-1]
+            x2=x1.cell(0)[0]
+            self.time2=x1.units.num2date(x2)
         if self.verbose:
             print(self)        
 
@@ -2425,8 +2523,6 @@ class AnnualCycle(object):
                 'nharm: {0.nharm!s} \n'+\
                 'file_data_in: {0.file_data_in!s} \n'+\
                 'data_in: {0.data_in!s} \n'+\
-                'time1: {0.time1!s} \n'+\
-                'time2: {0.time2!s} \n'+\
                 'file_anncycle_raw: {0.file_anncycle_raw!s} \n'+\
                 'file_anncycle_smooth: {0.file_anncycle_smooth!s} \n'+\
                 'file_anncycle_smooth_leap: {0.file_anncycle_smooth_leap!s} \n'+\
