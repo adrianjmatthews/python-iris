@@ -545,6 +545,72 @@ def truncate(cube_in,truncation):
 
 #==========================================================================
 
+def concatenate_cube(cubelist):
+    """concatenate_cube cube list when one cube has singleton time dimension.
+
+    Input is <cubelist>, an iris CubeList
+
+    Output is <cube>, a concatenate_cube'd version of <cubelist>
+
+    The problem: If a cube list contains a cube that has a singleton
+    time coordinate, then iris will have relegated that time
+    coordinate to a scalar coordinate when it extracted the cube.  The
+    other cubes will have time coordinates as dimension coordinates.
+    If the cubelist concatenate_cube method is used, it will fail because
+    of this mismatch of dimensions.
+
+    Example:
+    x1=iris.load('uwnd_200_????.nc') # Load data stored in single file per year
+    time1=datetime.datetime(1994,12,31)
+    time2=datetime.datetime(1995,1,6)
+    time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+    with iris.FUTURE.context(cell_datetime_objects=True):
+       x2=x1.extract(time_constraint)
+    x3=x2.concatenate_cube()
+
+    x2 is a cube list containing two cubes.  The first cube only has
+    one time (31 Dec 1994) and the time coordinate will have been
+    relegated to a scalar coordinate by the extract method.  The
+    second cube has 6 time values (1-6 Jan 1995) and its time
+    coordinate will be a dimension coordinate.  The
+    x2.concatenate_cube() will then fail.
+
+    Solution: Wherever this is likely to happen, replace the standard
+    cube list concatenate_cube method, i.e., in the example above,
+    replace
+
+    x3=x2.concatenate_cube() 
+
+    with a call to this function:
+
+    x3=concatenate_cube(x2)
+
+    This function uses iris.util.new_axis() to promote the singleton
+    scalar time coordinate to a dimension coordinate.  The cubes can
+    then be concatenate_cube'd using the standard cube list
+    concatenate_cube method.
+
+    """
+    # If there is only one cube in the cube list, concatenate_cube as usual
+    if len(cubelist)==1:
+        cube=cubelist.concatenate_cube()
+        return cube
+    # If there is more than one cube in the cube list, check for singleton
+    #   time dimensions
+    for index in range(len(cubelist)):
+        cubec=cubelist[index]
+        time_coord=cubec.coord('time')
+        if time_coord.shape==(1,):
+            print('concatenate_cube.  Promoting singleton time dimension.')
+            cubec=iris.util.new_axis(cubec,'time')
+            cubelist[index]=cubec
+    # Concatente into single cube
+    cube=cubelist.concatenate_cube()
+
+    return cube
+
+#==========================================================================
+
 class ToDoError(ValueError):
     """An exception that indicates I need to write some more code.
 
@@ -619,6 +685,12 @@ class TimeDomain(object):
 
     self.header : tuple of two strings, each beginning with '#', that
     are descriptors of the time domain
+
+    self.ndaytot : float of total number of days covered by time
+    domain if it is of type 'event'.
+
+    self.ndays : sorted list of floats of number of days in each event
+    in time domain, if time domain is of type 'event'.
 
     """
     
@@ -830,6 +902,12 @@ class TimeDomain(object):
                 time2=datetime.datetime(2015,12,31)
                 time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
                 amp_threshold=1
+            elif counter=='002':
+                header1='# RMM amplitude >=0.75, time range 1 Jan 1979 to 31 Dec 2015 \n'
+                time1=datetime.datetime(1979,1,1)
+                time2=datetime.datetime(2015,12,31)
+                time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+                amp_threshold=0.75
             else:
                 raise ValueError('counter is not valid.')
             if season=='djf':
@@ -891,6 +969,38 @@ class TimeDomain(object):
             self.datetimes=datetimes_list
             self.datetime2ascii()
             self.write_ascii()
+
+    def f_ndays(self):
+        """Calculate number of days covered by time domain.
+
+        Create ndays and ndaytot attributes.
+        """
+        if self.type=='event':
+            ndaytot=0
+            ndays=[]
+            for (time_beg,time_end) in self.datetimes:
+                timedeltac=time_end-time_beg
+                ndayc=timedeltac.total_seconds()/86400+1
+                ndays.append(ndayc)
+                ndaytot+=ndayc
+            ndays.sort()
+            self.ndays=ndays
+            self.ndaytot=ndaytot
+        else:
+            raise ValueError('Time domain must be of type "event" to calculate number of days.')
+
+    def info(self):
+        """Calculate and print information on time domain."""
+        self.read_ascii()
+        self.ascii2datetime()
+        self.f_nevents()
+        print('nevents: {0.nevents!s}'.format(self))
+        self.time_domain_type()
+        print('type: {0.type!s}'.format(self))
+        if self.type=='event':
+            self.f_ndays()
+            print('ndays: {0.ndays!s}'.format(self))
+            print('ndaytot: {0.ndaytot!s}'.format(self))
 
 #==========================================================================
 
@@ -1370,15 +1480,17 @@ class TimeDomStats(object):
         for eventc in self.tdomain.datetimes:
             time_beg=eventc[0]
             time_end=eventc[1]
-            print('time_beg: {0!s}'.format(time_beg))
-            print('time_end: {0!s}'.format(time_end))
+            print('time_beg,time_end: {0!s}, {1!s}'.format(time_beg,time_end))
             time_constraint=iris.Constraint(time=lambda cell: time_beg <=cell<= time_end)
             with iris.FUTURE.context(cell_datetime_objects=True):
                 x1=self.data_in.extract(time_constraint)
-            x2=x1.concatenate_cube()
+            x2=concatenate_cube(x1)
             ntime=x2.coord('time').shape[0]
             cube_event_ntimes.append(ntime)
-            x3=x2.collapsed('time',iris.analysis.MEAN)
+            if ntime==1:
+                x3=x2
+            else:
+                x3=x2.collapsed('time',iris.analysis.MEAN)
             cube_event_means.append(x3)
         self.cube_event_means=cube_event_means
         self.cube_event_ntimes=cube_event_ntimes
