@@ -525,7 +525,7 @@ def truncate(cube_in,truncation):
     if lat_beg<lat_end:
         south2north=True
     else:
-        south2north=True
+        south2north=False
     print('lat_beg, lat_end, south2north: {0!s}, {1!s}, {2!s} '.format(lat_beg,lat_end,south2north))
     # Create spoof uwnd and vwnd cubes to initiate VectorWind instance.
     uwnd=create_cube(cube_in.data,cube_in,new_var_name='uwnd')
@@ -612,6 +612,7 @@ def concatenate_cube(cubelist):
 #==========================================================================
 
 class ToDoError(ValueError):
+
     """An exception that indicates I need to write some more code.
 
     Use raise ToDoError as a placeholder for code to be written for a
@@ -912,6 +913,8 @@ class TimeDomain(object):
                 raise ValueError('counter is not valid.')
             if season=='djf':
                 valid_months=[12,1,2]
+            elif season=='n2a':
+                valid_months=[11,12,1,2,3,4]
             else:
                 raise ValueError('season is not valid.')
             if category not in list(range(1,8+1)):
@@ -1616,8 +1619,6 @@ class TimeDomStats(object):
         10-100 times longer to run than method here.
         
         """
-        # Set day counter
-        kount=0
         # Extract first day in first event of time domain
         xx=self.tdomain.datetimes[0]
         first_day=xx[0]
@@ -1630,9 +1631,22 @@ class TimeDomStats(object):
             x1=self.data_in.extract(time_constraint)
         x1=x1.concatenate_cube()
         cube1=x1
-        data_sum=x1.data
-        kount+=1
-        print('kount,time1,time2: {0!s}, {1!s}, {2!s}'.format(kount,time1,time2))
+        # NB the data attribute of an iris cube is a numpy array if there is
+        # no missing data, but a numpy masked array if there is missing data
+        # To deal with occasional missing data, convert the data attribute
+        # to a numpy masked array, and turn the boolean mask into an array of
+        # zeroes and ones.  The kount array then keeps track of the number
+        # of non-missing data values contributing to the sum at each spatial
+        # grid point
+        x1ma=np.ma.array(x1.data)
+        x1ma_mask_numerical=np.where(x1ma.mask,0,1)
+        x1ma_times_mask=x1ma.data*x1ma_mask_numerical
+        data_sum=x1ma_times_mask
+        kount=np.zeros(x1.data.shape)
+        kount+=x1ma_mask_numerical
+        print('time1,time2: {0!s}, {1!s}'.format(time1,time2))
+        #print('type(x1.data): {0!s}'.format(type(x1.data)))
+        #print(kount.shape,x1ma_mask_numerical.shape)
         #
         # Create time coordinate for final diurnal cycle
         # Extract times of day for data on first day
@@ -1656,9 +1670,14 @@ class TimeDomStats(object):
             with iris.FUTURE.context(cell_datetime_objects=True):
                 x1=self.data_in.extract(time_constraint)
             x1=x1.concatenate_cube()
-            data_sum+=x1.data
-            kount+=1
-            print('kount,time1,time2: {0!s}, {1!s}, {2!s}'.format(kount,time1,time2))
+            x1ma=np.ma.array(x1.data)
+            x1ma_mask_numerical=np.where(x1ma.mask,0,1)
+            x1ma_times_mask=x1ma.data*x1ma_mask_numerical
+            data_sum+=x1ma_times_mask
+            kount+=x1ma_mask_numerical
+            print('time1,time2: {0!s}, {1!s}'.format(time1,time2))
+            #print('type(x1.data): {0!s}'.format(type(x1.data)))
+            #print(kount.shape,x1ma_mask_numerical.shape)
             time1+=timedelta_day
             time2+=timedelta_day
         # Loop over (any) remaining events in time domain and add data to data_sum
@@ -1673,12 +1692,19 @@ class TimeDomStats(object):
                 with iris.FUTURE.context(cell_datetime_objects=True):
                     x1=self.data_in.extract(time_constraint)
                 x1=x1.concatenate_cube()
-                data_sum+=x1.data
-                kount+=1
-                print('kount,time1,time2: {0!s}, {1!s}, {2!s}'.format(kount,time1,time2))
+                x1ma=np.ma.array(x1.data)
+                x1ma_mask_numerical=np.where(x1ma.mask,0,1)
+                x1ma_times_mask=x1ma.data*x1ma_mask_numerical
+                data_sum+=x1ma_times_mask
+                kount+=x1ma_mask_numerical
+                print('time1,time2: {0!s}, {1!s}'.format(time1,time2))
+                #print('type(x1.data): {0!s}'.format(type(x1.data)))
+                #print(kount.shape,x1ma_mask_numerical.shape)
                 time1+=timedelta_day
                 time2+=timedelta_day
         # Divide by kount
+        #print('kount: {0!s}'.format(kount))
+        print('kount.min,kount.max: {0!s}, {1!s}'.format(kount.min(),kount.max()))
         data_mean=data_sum/kount
         # Create iris cube using metadata from first day of input data
         x10=create_cube(data_mean,cube1)
@@ -2438,7 +2464,7 @@ class Wind(object):
         if lat_beg<lat_end:
             self.south2north=True
         else:
-            self.south2north=True
+            self.south2north=False
         print('lat_beg, lat_end, south2north: {0!s}, {1!s}, {2!s} '.format(lat_beg,lat_end,self.south2north))
         # Create VectorWind instance
         self.ww=VectorWind(self.uwnd,self.vwnd)
@@ -4000,3 +4026,206 @@ class CubeDiagnostics(object):
         print('fileout: {0!s}'.format(fileout))
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.res_dvrtdt,fileout)
+
+#==========================================================================
+
+class Planet(object):
+
+    """Planetary parameters.
+
+    Default is Planet Earth.
+
+    Attributes:
+
+    Specified base attributes
+
+    self.arad : Planet radius (m)
+    self.gg : Gravitational acceleration at surface (m s-2)
+    self.omega :  Sidereal rotation rate (s-1)
+    self.gascon : Specific gas constant of atmosphere (J kg-1 K-1)
+    self.cp : Specific heat capacity of atmosphere at constant pressure (J kg-1 K-1)
+
+    Derived attributes
+
+    self.f0 : Coriolis parameter at 45 degrees lat (s-1)
+    self.beta0 : beta at equator (m-1 s-1)
+    self.circum : planet circumference (m)
+    """
+
+    def __init__(self,title='Earth',verbose=True):
+        """Initialise."""
+        self.title=title
+        self.verbose=verbose
+        if self.title=='Earth':
+            self.arad=6370000
+            self.gg=9.81
+            self.omega=7.292e-5
+            self.gascon=287
+            self.cp=1004
+        else:
+            raise ToDoError('Code up for other planets.')
+        self.f0=np.sqrt(2)*self.omega
+        self.beta0=2*self.omega/self.arad
+        self.circum=2*np.pi*self.arad
+        if self.verbose:
+            print(self)
+            
+    def __repr__(self):
+        return 'Planet(title={0.title!r}, verbose={0.verbose!r})'.format(self)
+    
+    def __str__(self):
+        if self.verbose:
+            ss=h1a+'Planet instance \n'+\
+                'title: {0.title!s} \n'+\
+                'arad: {0.arad!s} m \n'+\
+                'gg: {0.gg!s} m s-2 \n'+\
+                'omega: {0.omega!s} s-1 \n'+\
+                'gascon: {0.gascon!s} J kg-1 K-1 \n'+\
+                'cp: {0.cp!s} J kg-1 K-1 \n'+\
+                'f0: {0.f0!s} s-1 \n'+\
+                'beta0: {0.beta0!s} m-1 s-1 \n'+\
+                'circum: {0.circum!s} m \n'+h1b
+            return ss.format(self)
+        else:
+            return self.__repr__()    
+
+#==========================================================================
+
+class XYGrid(object):
+
+    """Regularly spaced 2-d rectangular grid.
+    
+    Basic grid is initially an empty (zeroes) 2-d numpy array.  Populate
+    the grid with numbers externally.
+
+    Two alternative sets of axes are used: (x,y) and (lon,lat).  All
+    calculations on the grid are done using the (x,y) axes.  The
+    (lon,lat) axes are only for presentational purposes.
+
+    Attributes:
+    
+    self.nx=self.nlon, self.ny=self.nlat : integer number of grid
+    points in x and y directions.
+    
+    self.deltax, self.deltay : float spacing for x and y grid points
+    
+    self.deltalon, self.deltalat : equivalent float spacing for lon
+    and lat grid points
+    
+    self.x1, self.y1 : float values of first points on x and y axes
+    
+    self.lon1, self.lat1 : equivalent float values of first points on
+    lon and lat axes
+
+    self.xaxis, self.yaxis : numpy arrays of x and y values
+    
+    self.lonaxis, self.lataxis : equivalent numpy arrays of lon and
+    lat values
+    
+    self.xperiodic, self.yperiodic : Boolean flags for whether x and y
+    axes are periodic (wrapping around).
+    
+    """
+    
+    def __init__(self,descriptor,verbose=True):
+        """Initialise."""
+        self.nx=self.nlon=descriptor['nx']
+        self.ny=self.nlat=descriptor['ny']
+        self.type_init=descriptor['type_init']
+        self.var_name=descriptor['var_name']
+        self.units=descriptor['units']
+        if self.type_init=='lonlat':
+            self.deltalon=descriptor['deltalon']
+            self.deltalat=descriptor['deltalat']
+            self.lon1=descriptor['lon1']
+            self.lat1=descriptor['lat1']
+        elif self.type_init=='xy':
+            self.deltax=descriptor['deltax']
+            self.deltay=descriptor['deltay']
+            self.x1=descriptor['x1']
+            self.y1=descriptor['y1']
+        else:
+            raise ValueError('Invalid initial type.')
+        self.xperiodic=descriptor['xperiodic']
+        self.yperiodic=descriptor['yperiodic']
+        self.verbose=verbose
+        # Create initial 2-d grid of zeros in numpy array
+        self.grid=np.zeros((self.ny,self.nx))
+        self.planet=Planet()
+        if self.type_init=='lonlat':
+            # Create x-y equivalents
+            self.deltax=(self.deltalon/360)*self.planet.circum
+            self.deltay=(self.deltalat/360)*self.planet.circum
+            self.x1=(self.lon1/360)*self.planet.circum
+            self.y1=(self.lat1/360)*self.planet.circum
+        elif self.type_init=='xy':
+            # Create lon-lat equivalents
+            self.deltalon=(self.deltax/self.planet.circum)*360
+            self.deltalat=(self.deltay/self.planet.circum)*360
+            self.lon1=(self.x1/self.planet.circum)*360
+            self.lat1=(self.y1/self.planet.circum)*360
+        # Create lon-axis
+        self.lon2=self.lon1+(self.nlon-1)*self.deltalon
+        epsilon=self.deltalon/100
+        self.lonaxis=np.arange(self.lon1,self.lon2+epsilon,self.deltalon)
+        # Create lat-axis
+        self.lat2=self.lat1+(self.nlat-1)*self.deltalat
+        self.lataxis=np.arange(self.lat1,self.lat2+epsilon,self.deltalat)
+        # Create x-axis
+        self.x2=self.x1+(self.nx-1)*self.deltax
+        epsilon=self.deltax/100
+        self.xaxis=np.arange(self.x1,self.x2+epsilon,self.deltax)
+        # Create y-axis
+        self.y2=self.y1+(self.ny-1)*self.deltay
+        self.yaxis=np.arange(self.y1,self.y2+epsilon,self.deltay)
+        if self.verbose:
+            print(self)
+            
+    def __repr__(self):
+        return 'XYGrid({0.type_init!r},verbose={0.verbose!r})'.format(self)
+    
+    def __str__(self):
+        if self.verbose:
+            ss=h1a+'XYGrid instance \n'+\
+                'type_init: {0.type_init!s} \n'+\
+                'nlon,nlat: {0.nlon!s},{0.nlat!s} \n'+\
+                'deltalon,deltalat: {0.deltalon!s},{0.deltalat!s} \n'+\
+                'lon1,lon2: {0.lon1!s},{0.lon2!s} \n'+\
+                'lat1,lat2: {0.lat1!s},{0.lat2!s} \n'+\
+                'nx,ny: {0.nx!s},{0.ny!s} \n'+\
+                'deltax,deltay: {0.deltax!s},{0.deltay!s} \n'+\
+                'x1,x2: {0.x1!s},{0.x2!s} \n'+\
+                'y1,y2: {0.y1!s},{0.y2!s} \n'+\
+                'xperiodic,yperiodic: {0.xperiodic!s},{0.yperiodic!s} \n'+h1b
+            return ss.format(self)
+        else:
+            return self.__repr__()
+
+    def x_gradient(self):
+        """Calculate x-gradient of self.grid.
+
+        Creates attribute self.x_gradient."""
+
+    def y_gradient(self):
+        """Calculate y-gradient of self.grid.
+
+        Creates attribute self.y_gradient."""
+
+    def create_xy_cube(self):
+        """Create iris cube from x-y grid.
+
+        Creates attribute self.xy_cube."""
+
+    def create_lonlat_cube(self):
+        """Create iris cube from lon-lat grid.
+
+        Creates attribute self.lonlat_cube."""
+        loncoord=iris.coords.DimCoord(self.lonaxis,standard_name='longitude',units='degree_east',circular=self.xperiodic)
+        latcoord=iris.coords.DimCoord(self.lataxis,standard_name='latitude',units='degree_north')
+        dim_coords=[[latcoord,0],[loncoord,1]]
+        newcube=iris.cube.Cube(self.grid,units=self.units,dim_coords_and_dims=dim_coords)
+        long_name=var_name2long_name[self.var_name]
+        newcube.rename(long_name)
+        newcube.var_name=self.var_name
+        self.lonlatcube=newcube
+        
