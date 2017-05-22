@@ -1889,19 +1889,30 @@ class TimeFilter(object):
         weights=[float(xx) for xx in lines2]
         self.weights=np.array(weights)
 
+    def time_filter(self,subtract=False):
+        """Filter using the rolling_window cube method and save data.
 
-    def time_filter(self):
-        """Filter using the rolling_window cube method and save data."""
+        If subtract is True, then the filtered data is subtracted from
+        the original data.  This option is generally used to create
+        high-pass filtered data.  For example, if the filter weights
+        create an N-running mean low pass filter data set, this is
+        then subtracted from the original data to create a high-pass
+        filtered data set.
+
+        """
         # Set start and end time of output data
         self.timeout1,self.timeout2=block_times(self,verbose=self.verbose)
         # Calculate start and end time of input data
         self.timein1=self.timeout1-self.timedelta
         self.timein2=self.timeout2+self.timedelta
         # Set output file name
+        subtract_string=''
+        if subtract:
+            subtract_string='minus_'
         if self.outfile_frequency=='year':
-            self.fileout1=self.filein1.replace(self.wildcard,self.filter+'_'+str(self.year))
+            self.fileout1=self.filein1.replace(self.wildcard,subtract_string+self.filter+'_'+str(self.year))
         elif self.outfile_frequency=='month':
-            self.fileout1=self.filein1.replace(self.wildcard,self.filter+'_'+str(self.year)+str(self.month).zfill(2))
+            self.fileout1=self.filein1.replace(self.wildcard,subtract_string+self.filter+'_'+str(self.year)+str(self.month).zfill(2))
         else:
             raise ValueError('outfile_frequency not recognised')
         if self.verbose==2:
@@ -1921,8 +1932,18 @@ class TimeFilter(object):
                 self.nweights,weights=self.weights)
         # Create a cube from this numpy array
         x4=create_cube(conv_float32(x3.data),x3)
+        # Subtract filtered data from original data if required
+        if subtract:
+            # Re-read input data over same time range as output data
+            time_constraint2=iris.Constraint(time=lambda cell: self.timeout1 <=cell<= self.timeout2)
+            with iris.FUTURE.context(cell_datetime_objects=True):
+                x2a=self.data_in.extract(time_constraint2)
+            x2b=x2a.concatenate_cube()
+            # Subtract filtered data
+            x5=x2b.data-x4.data
+            x4=create_cube(conv_float32(x5),x3)
         # Add a cell method to describe the time filter
-        cm=iris.coords.CellMethod('mean','time',comments='time filter: '+self.filter)
+        cm=iris.coords.CellMethod('mean','time',comments='time filter: '+subtract_string+self.filter)
         x4.add_cell_method(cm)
         # Set time bounds to None type
         x4.coord('time').bounds=None
