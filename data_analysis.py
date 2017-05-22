@@ -71,13 +71,13 @@ var_name2long_name={
     'bsiso1-1':'BSISO_1-1_index',
     'bsiso1-2':'BSISO_1-2_index',
     'bsiso1-amp':'BSISO_1_amplitude',
-    'bsiso1-cat':'BSISO_1_category',
-    'bsiso1-theta':'BSISO_1_phase_angle',
+    'bsiso1_cat':'BSISO_1_category',
+    'bsiso1_theta':'BSISO_1_phase_angle',
     'bsiso2-1':'BSISO_2-1_index',
     'bsiso2-2':'BSISO_2-2_index',
-    'bsiso2-amp':'BSISO_2_amplitude',
-    'bsiso2-cat':'BSISO_2_category',
-    'bsiso2-theta':'BSISO_2_phase_angle',
+    'bsiso2_amp':'BSISO_2_amplitude',
+    'bsiso2_cat':'BSISO_2_category',
+    'bsiso2_theta':'BSISO_2_phase_angle',
     'chi':'atmosphere_horizontal_velocity_potential',
     'div':'divergence_of_wind',
     'domegady_duwnddp':'meridional_derivative_of_lagrangian_tendency_of_air_pressure_times_pressure_derivative_of_zonal_wind',
@@ -884,39 +884,54 @@ class TimeDomain(object):
 
     def f_create_time_domain_from_indices(self):
         """Create time domain from algorithm on index time series."""
-        if len(self.idx)==10 and self.idx[:3]=='rmm':
-            # Time domains based on RMM indices
-            # Format is 'rmmXXXYYYZ' where
+        if len(self.idx)==10 and self.idx[:3] in ['rmm','bs1','bs2']:
+            # Time domains based on RMM or BSISO indices
+            # Format is 'PPPXXXYYYZ' where
+            #   'PPP' is name of index: 'rmm','bs1','bs2'
             #   'XXX' is a counter e.g. '001'
             #   'YYY' is a season e.g. 'djf', 'jja', 'n2a', 'm2o'
-            #   'Z' is the RMM category ('1' to '8')
+            #   'Z' is the category ('1' to '8')
+            indexname=self.idx[0:3]
             counter=self.idx[3:6]
             season=self.idx[6:9]
             category=int(self.idx[9])
+            print('indexname: {0!s}'.format(indexname))
             print('counter: {0!s}'.format(counter))
             print('season: {0!s}'.format(season))
             print('category: {0!s}'.format(category))
             # Counters:
+            header1='# '+indexname+': '
             if counter=='001':
-                header1='# RMM amplitude >=1, time range 1 Jan 1979 to 31 Dec 2015 \n'
+                header1+='Index amplitude >=1, time range 1 Jan 1979 to 31 Dec 2015 \n'
                 time1=datetime.datetime(1979,1,1)
                 time2=datetime.datetime(2015,12,31)
                 time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
                 amp_threshold=1
             elif counter=='002':
-                header1='# RMM amplitude >=0.75, time range 1 Jan 1979 to 31 Dec 2015 \n'
+                header1+='Index amplitude >=0.75, time range 1 Jan 1979 to 31 Dec 2015 \n'
                 time1=datetime.datetime(1979,1,1)
                 time2=datetime.datetime(2015,12,31)
                 time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
                 amp_threshold=0.75
+            elif counter=='003':
+                # Same conditions as Fig. 9 in Lee et al. (2013)
+                header1+='Index amplitude >=1.5, time range 1 Jan 1981 to 31 Dec 2010 \n'
+                time1=datetime.datetime(1981,1,1)
+                time2=datetime.datetime(2010,12,31)
+                time_constraint=iris.Constraint(time=lambda cell: time1<=cell<=time2)
+                amp_threshold=1.5
             else:
                 raise ValueError('counter is not valid.')
+            # Seasons
             if season=='djf':
                 valid_months=[12,1,2]
             elif season=='n2a':
                 valid_months=[11,12,1,2,3,4]
+            elif season=='m2o':
+                valid_months=[5,6,7,8,9,10]
             else:
                 raise ValueError('season is not valid.')
+            # Category
             if category not in list(range(1,8+1)):
                 raise ValueError('category is not valid.')
             header2='# Season='+season+', category='+str(category)+' \n'
@@ -924,13 +939,23 @@ class TimeDomain(object):
             self.header=(header1,header2)
             print(header1)
             print(header2)
-            # Read input time series of RMM amplitude and category
-            source='rmm_nl_d'
-            f1=os.path.join(self.tseriesdir,source,'std','rmm_amp_-999.nc')
-            f2=os.path.join(self.tseriesdir,source,'std','rmm_cat_-999.nc')
-            with iris.FUTURE.context(netcdf_promote=True):
-                x1=iris.load_cube(f1,'RMM_amplitude')
-                x2=iris.load_cube(f2,'RMM_category')
+            # Read input time series of index amplitude and category
+            if indexname=='rmm':
+                source='rmm_nl_d'
+                f1=os.path.join(self.tseriesdir,source,'std','rmm_amp_-999.nc')
+                f2=os.path.join(self.tseriesdir,source,'std','rmm_cat_-999.nc')
+                with iris.FUTURE.context(netcdf_promote=True):
+                    x1=iris.load_cube(f1,'RMM_amplitude')
+                    x2=iris.load_cube(f2,'RMM_category')
+            elif indexname=='bs1':
+                source='bsiso_nl_d'
+                f1=os.path.join(self.tseriesdir,source,'std','bsiso1_amp_-999.nc')
+                f2=os.path.join(self.tseriesdir,source,'std','bsiso1_cat_-999.nc')
+                with iris.FUTURE.context(netcdf_promote=True):
+                    x1=iris.load_cube(f1,'BSISO_1_amplitude')
+                    x2=iris.load_cube(f2,'BSISO_1_category')
+            else:
+                raise ValueError('Invalid indexname.')
             # Extract data for valid time range
             with iris.FUTURE.context(cell_datetime_objects=True):
                 x1a=x1.extract(time_constraint)
@@ -948,7 +973,7 @@ class TimeDomain(object):
             for timevalc in time_coord.points:
                 timecompc=time_units.num2date(timevalc)
                 time_constraint2=iris.Constraint(time=timevalc)
-                # Extract RMM amplitude and category at current time
+                # Extract index amplitude and category at current time
                 ampc=float(x1a.extract(time_constraint2).data)
                 catc=float(x2a.extract(time_constraint2).data)
                 # Set flag for current time
