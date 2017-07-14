@@ -34,6 +34,7 @@ from __future__ import division, print_function, with_statement # So can run thi
 import datetime
 import os.path
 import pdb
+import random
 
 import gsw # Gibbs TEOS-10 seawater routines
 import iris
@@ -70,7 +71,7 @@ h2b='--------------------------->>>\n'
 var_name2long_name={
     'bsiso1-1':'BSISO_1-1_index',
     'bsiso1-2':'BSISO_1-2_index',
-    'bsiso1-amp':'BSISO_1_amplitude',
+    'bsiso1_amp':'BSISO_1_amplitude',
     'bsiso1_cat':'BSISO_1_category',
     'bsiso1_theta':'BSISO_1_phase_angle',
     'bsiso2-1':'BSISO_2-1_index',
@@ -82,6 +83,8 @@ var_name2long_name={
     'div':'divergence_of_wind',
     'domegady_duwnddp':'meridional_derivative_of_lagrangian_tendency_of_air_pressure_times_pressure_derivative_of_zonal_wind',
     'dvrtdt':'tendency_of_atmosphere_relative_vorticity',
+    'elevation':'height_above_reference_ellipsoid',
+    'ew':'water_vapor_partial_pressure_in_air',
     'ke':'specific_kinetic_energy_of_air',
     'lat':'latitude',
     'lhfd':'surface_downward_latent_heat_flux',
@@ -98,10 +101,12 @@ var_name2long_name={
     'olr':'toa_outgoing_longwave_flux',
     'omega':'lagrangian_tendency_of_air_pressure',
     'ppt':'lwe_precipitation_rate',
+    'pa':'air_pressure',
     'psfc':'surface_air_pressure',
     'psi':'atmosphere_horizontal_streamfunction',
     'pv':'ertel_potential_vorticity',
     'res_dvrtdt':'residual_tendency_of_atmosphere_relative_vorticity',
+    'rhum':'relative_humidity',
     'rmm1':'RMM_1_index',
     'rmm2':'RMM_2_index',
     'rmm_amp':'RMM_amplitude',
@@ -611,6 +616,54 @@ def concatenate_cube(cubelist):
 
 #==========================================================================
 
+def cube_section(cube_in,xdat,ydat,verbose=False):
+    """Calculate an irregular section through a cube.
+
+    Called from e.g., curved_section.py
+
+    Inputs:
+
+    cube_in: input iris cube
+
+    xdat,ydat : 2-tuples.  First element is string of coordinate name.
+    Second element is list of coordinate values.  Both coordinate
+    names must be coordinates of cube_in.
+
+    e.g., xdat is ('longitude',[4.3, 5.7, 6.1])
+          ydat is ('latitude', [13.1, 12.6, 5.6])
+
+    Outputs:
+
+    cube_out: iris cube, with data from cube_in interpolated onto the
+    xdat,ydat values.
+
+    """
+    xdat_coord=xdat[0]
+    xdat_vals=xdat[1]
+    ydat_coord=ydat[0]
+    ydat_vals=ydat[1]
+    if verbose:
+        ss=h1a+'section \n'+\
+            'xdat_coord: {0!s}\n'+\
+            'xdat_vals: {1!s}\n'+\
+            'ydat_coord: {2!s}\n'+\
+            'ydat_vals: {3!s}\n'+h1b
+        print(ss.format(xdat_coord,xdat_vals,ydat_coord,ydat_vals))
+    if len(xdat_vals)!=len(ydat_vals):
+        raise ValueError('xdat_vals and ydat_vals must have same number of values.')
+    x1=iris.cube.CubeList([])
+    for ival in range(len(xdat_vals)):
+        xdat_valc=xdat_vals[ival]
+        ydat_valc=ydat_vals[ival]
+        samples=[(xdat_coord,xdat_valc),(ydat_coord,ydat_valc)]
+        x2=cube_in.interpolate(samples,iris.analysis.Linear())
+        x1.append(x2)
+    cube_out=x1.merge_cube()
+
+    return cube_out
+
+#==========================================================================
+
 class ToDoError(ValueError):
 
     """An exception that indicates I need to write some more code.
@@ -866,6 +919,7 @@ class TimeDomain(object):
 
         'Event' type is list of paired (start,end) times.
 
+        Creates type attribute.
         """
         t1=self.datetimes[0]
         if len(t1)==1:
@@ -1030,6 +1084,71 @@ class TimeDomain(object):
             print('ndays: {0.ndays!s}'.format(self))
             print('ndaytot: {0.ndaytot!s}'.format(self))
 
+    def f_randomise_times(self,idx_new,max_day_shift,time_first,time_last):
+        """Create copy of time domain with randomised times.
+
+        Inputs:
+
+        idx_new : string id of new (randomised) time domain
+
+        max_day_shift : integer (typical value 15)
+
+        time_first, time_last : datetime.datetime objects
+        corresponding to the time range of the data this randomised
+        time domain will be applied to.
+        
+        For each random time, the year of the original time is
+        replaced by a random year between time_first.year and
+        time_last.year, and the day is shifted randomly between
+        plus/minus max_day_shift.  This procedure ensures the
+        randomised time is at approximately the same time of year
+        (i.e., same part of seasonal cycle) as the original time.
+
+        If the time domain type is 'event', the randomisation is
+        carried out on the start time of each pair of datetimes, and
+        the time difference between the start and end time of each
+        pair is preserved.
+
+        Returns tdomain_rand, a new (randomised) TimeDomain object.
+        """
+        # Loop over datetimes in time domain
+        datetimes_rand=[]
+        for dtc in self.datetimes:
+            # Extract start datetime if type is 'event', or only datetime if type is 'single'
+            dt0=dtc[0]
+            # If type is 'event' extract end datetime
+            if self.type=='event':
+                dt1=dtc[1]
+                timedelta=dt1-dt0
+            # Randomise datetime(s) and check they lie within allowed range
+            checked_valid_time_range=False
+            while not checked_valid_time_range:
+                year_rand=random.randrange(time_first.year,time_last.year+1)
+                day_increment_rand=random.randrange(-max_day_shift,max_day_shift+1)
+                dt0_rand=datetime.datetime(year_rand,dt0.month,dt0.day,dt0.hour,dt0.minute,dt0.second)+datetime.timedelta(days=day_increment_rand)
+                print(year_rand,day_increment_rand,dt0,dt0_rand)
+                # If type is 'event' change end datetime consistently to preserve time difference between start and end time of this datetime pair
+                if self.type=='event':
+                    dt1_rand=dt0_rand+timedelta
+                    print(dt1_rand)
+                # Check randomised times are within allowable range
+                if (self.type=='single' and time_first<=dt0<=time_last) or (self.type=='event' and time_first<=dt0 and dt1<=time_last):
+                    checked_valid_time_range=True
+                    print('Randomised datetimes lie inside allowed range.  Proceed.')
+                else:
+                    print('Randomised datetimes lie outside allowed range.  Randomise again.')
+            if self.type=='event':
+                datetimes_rand.append([dt0_rand,dt1_rand])
+            elif self.type=='single':
+                datetimes_rand.append([dt0_rand])
+            else:
+                raise ValueError('Invalid time domain type.')
+        # Create new time domain from randomised datetimes
+        tdomain_rand=TimeDomain(idx_new)
+        tdomain_rand.datetimes=datetimes_rand
+
+        return tdomain_rand
+
 #==========================================================================
 
 class DataConverter(object):
@@ -1173,7 +1292,12 @@ class DataConverter(object):
         if self.source in ['erainterim_plev_6h']:
             self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+str(self.level)+'_'+str(self.year)+'_6.nc')
         elif self.source in ['ncepdoe_plev_6h','ncepdoe_plev_d','ncepncar_plev_d']:
-            self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.'+str(self.year)+'.nc')
+            if self.var_name=='ta':
+                self.filein1=os.path.join(self.basedir,self.source,'raw','air'+'.'+str(self.year)+'.nc')
+            elif self.var_name=='zg':
+                self.filein1=os.path.join(self.basedir,self.source,'raw','hgt'+'.'+str(self.year)+'.nc')
+            else:
+                self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.'+str(self.year)+'.nc')
         elif self.source in ['ncepncar_sfc_d',]:
             self.filein1=os.path.join(self.basedir,self.source,'raw',self.var_name+'.sig995.'+str(self.year)+'.nc')
         elif self.source in ['olrcdr_toa_d','olrinterp_toa_d']:
@@ -1446,6 +1570,26 @@ class TimeDomStats(object):
     self.time_mean : iris cube of time mean calculated over the whole
     time domain.
 
+    # Following attributes are used in Monte Carlo simulation to
+    # calculate null distribution of mean.
+
+    self.nmc : integer number of Monte Carlo simulations to be
+    performed for calculation of null distribution.
+
+    self.percentiles_null : list of the percentiles of the null
+    distribution to be saved.
+
+    self.max_day_shift : integer maximum day shift to be used in
+    randomisation of time domain times for use in calculation of null
+    distribution.
+
+    self.time_first : datetime.datetime object that is first (i.e.,
+    lowest) allowable date for the randomised times in the Monte Carlo
+    simulation.
+
+    self.time_last : as self.time_first but the last (i.e., highest)
+    allowable date.
+
     """
 
     def __init__(self,descriptor,verbose=False):
@@ -1470,6 +1614,16 @@ class TimeDomStats(object):
         self.fileout_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'.nc')
         self.fileout_lagged_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_lag.nc')
         self.fileout_dc=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_dc.nc')
+        if 'nmc' in descriptor:
+            self.nmc=descriptor['nmc']
+        if 'percentiles_null' in descriptor:
+            self.percentiles_null=descriptor['percentiles_null']
+        if 'max_day_shift' in descriptor:
+            self.max_day_shift=descriptor['max_day_shift']
+        if 'time_first' in descriptor:
+            self.time_first=descriptor['time_first']
+        if 'time_last' in descriptor:
+            self.time_last=descriptor['time_last']
         if self.verbose:
             print(self)
         
@@ -1563,6 +1717,47 @@ class TimeDomStats(object):
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.time_mean,self.fileout_mean)
 
+    def f_percentiles_null(self):
+        """Calculate percenticles of null distribution of the time mean.
+
+        Perform a Monte Carlo simulation of size self.nmc to create
+        the null distribution of the time mean.  For each evaluation in the
+        Monte Carlo simulation,
+
+        
+        The time mean is then calculated for each of the self.nmc
+        randomised time domains, building up a null distribution of
+        the mean of length self.nmc.
+
+        The percentiles self.percentiles_null of this distribution are
+        then extracted and saved as self.mean_percentiles_null.
+
+        Creates attributes:
+
+        self.mean_percentiles_null
+
+        """
+        if self.verbose:
+            ss=h1a+'f_percentiles_null \n'+\
+                'nmc: {0.nmc!s} \n'+\
+                'percentiles_null: {0.percentiles_null!s} \n'+\
+                'max_day_shift: {0.max_day_shift!s} \n'+\
+                'time_first: {0.time_first!s} \n'+\
+                'time_last: {0.time_last!s} \n'+h1b
+            print(ss.format(self))
+        self.tdomain.time_domain_type()
+        zfill_length=len(str(self.nmc))
+        # Loop over Monte Carlo simulations and create list of randomised time domains
+        tdomains_mc=[]
+        for imc in range(self.nmc):
+            idxc=self.tdomainid+'_'+str(imc).zfill(zfill_length)
+            print('imc,idxc: {0!s}, {1!s}'.format(imc,idxc))
+            tdomain_rand=self.tdomain.f_randomise_times(idxc,self.max_day_shift,self.time_first,self.time_last)
+            tdomains_mc.append(tdomain_rand)
+        self.tdomains_mc=tdomains_mc
+
+        # Loop over Monte Carlo simulations again and create list of time means from each randomised time domain
+
     def f_lagged_mean(self,lags=[0,]):
         """Calculate time-lagged means over time domain and save.
 
@@ -1605,6 +1800,7 @@ class TimeDomStats(object):
             time_constraints_lagc=[iris.Constraint(time=xx) for xx in datetimes_lagc]
             with iris.FUTURE.context(cell_datetime_objects=True):
                 x1=[self.data_in.extract(xx) for xx in time_constraints_lagc]
+            pdb.set_trace()
             x2=[xx.concatenate_cube() for xx in x1]
             x3=iris.cube.CubeList(x2)
             x4=x3.merge_cube()
@@ -1840,7 +2036,7 @@ class TimeFilter(object):
         else:
             raise ToDoError('data time interval is not days or hours - need more code!')
         if self.verbose:
-            print(self)        
+            print(self)
 
     def __repr__(self):
         return 'TimeFilter({0.descriptor!r},verbose={0.verbose!r})'.format(self)
@@ -1892,12 +2088,14 @@ class TimeFilter(object):
     def time_filter(self,subtract=False):
         """Filter using the rolling_window cube method and save data.
 
+        If subtract is False, the filtered data set is just returned.
+
         If subtract is True, then the filtered data is subtracted from
-        the original data.  This option is generally used to create
-        high-pass filtered data.  For example, if the filter weights
-        create an N-running mean low pass filter data set, this is
-        then subtracted from the original data to create a high-pass
-        filtered data set.
+        the original data, and this subtracted data set is returned.
+        This option is generally used to create high-pass filtered
+        data.  For example, if the filter weights create an N-running
+        mean low pass filter data set, this is then subtracted from
+        the original data to create a high-pass filtered data set.
 
         """
         # Set start and end time of output data
@@ -1928,7 +2126,7 @@ class TimeFilter(object):
             x2=self.data_in.extract(time_constraint)
         self.data_current=x2.concatenate_cube()
         # Apply filter
-        x3=self.data_current.rolling_window('time',iris.analysis.MEAN,
+        x3=self.data_current.rolling_window('time',iris.analysis.SUM,
                 self.nweights,weights=self.weights)
         # Create a cube from this numpy array
         x4=create_cube(conv_float32(x3.data),x3)
@@ -2067,7 +2265,7 @@ class TimeAverage(object):
                     x2=x1.concatenate_cube()
                     # Calculate daily mean
                     x3=x2.collapsed('time',iris.analysis.MEAN)
-                    # Reset auxilliary time coordinate for current day at 00 UTC
+                    # Reset auxiliary time coordinate for current day at 00 UTC
                     timec_val=time_units.date2num(timec1)
                     timec_coord=iris.coords.DimCoord(timec_val,standard_name='time',units=time_units)
                     x3.remove_coord('time')
@@ -2762,7 +2960,7 @@ class AnnualCycle(object):
             x3.add_cell_method(cm)
             # Remove now inappropriate time coordinate
             x3.remove_coord('time')
-            # Add auxilliary time coordinate for current day of year
+            # Add auxiliary time coordinate for current day of year
             time_diff=time_sample-time_first
             time_val=time_diff.days
             time_units='days since '+str(time_first)
@@ -3728,6 +3926,72 @@ class CubeDiagnostics(object):
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.swpd,fileout)
 
+    def f_specific_humidity(self):
+        """Calculate specific humidity from relative humidity and temperature.
+
+        Assumes ta (air temperature) and rhum (relative humidity) on
+        pressure level self.level have already been loaded, in
+        self.data_in['ta_LEVEL'] and self.data_in['rhum_LEVEL'].
+
+        Use Clausius-Clapeyron relation (COARE algorithm) to calculate
+        specific humidity.  Follows the saturation specific humidity
+        computation in the COARE Fortran code v2.5b.
+
+        Reference is
+        https://woodshole.er.usgs.gov/operations/sea-mat/air_sea-html/qsat.html
+
+        """
+        # Read in ta,rhum for current time block and assign to ta,rhum attributes
+        self.time1,self.time2=block_times(self,verbose=self.verbose)
+        time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x1=self.data_in['ta_'+str(self.level)].extract(time_constraint)
+            x2=self.data_in['rhum_'+str(self.level)].extract(time_constraint)
+        self.ta=x1.concatenate_cube()
+        self.rhum=x2.concatenate_cube()
+        # air temperature must be in degC
+        self.ta.convert_units('celsius')
+        # relative humidity must be a fraction (not percentage)
+        self.rhum.convert_units('1')
+        # Calculate specific humidity
+        ta=self.ta.data
+        rhum=self.rhum.data
+        pa=self.level
+        # vapour pressure in hPa
+        ew=6.1121*(1.0007+3.46e-6*pa)*np.exp((17.502*ta)/(240.97+ta))
+        # saturated specific humidity in kg kg-1
+        shum_sat=0.62197*(ew/(pa-0.378*ew))
+        # specific humidity in kg kg-1
+        shum=rhum*shum_sat
+        # Create iris cube of shum
+        var_name='shum'
+        self.shum=create_cube(conv_float32(shum),self.rhum,new_var_name=var_name)
+        self.shum.units='1'
+        # Add cell method to describe calculation of sea water potential density
+        cm=iris.coords.CellMethod('point','pressure',comments='specific humidity calculated from relative humidity and temperature')
+        self.shum.add_cell_method(cm)
+        # Save cube
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.shum,fileout)
+        if self.verbose:
+            ta_min=self.ta.data.min()
+            ta_max=self.ta.data.max()
+            rhum_min=self.rhum.data.min()
+            rhum_max=self.rhum.data.max()
+            shum_min=self.shum.data.min()
+            shum_max=self.shum.data.max()
+            ss=h1a+'f_specific_humidity\n'+\
+                'level: {0.level!s}\n'+\
+                'ta min: {1!s}\n'+\
+                'ta max: {2!s}\n'+\
+                'rhum min: {3!s}\n'+\
+                'rhum max: {4!s}\n'+\
+                'shum min: {5!s}\n'+\
+                'shum max: {6!s}\n'+h1b
+            print(ss.format(self,ta_min,ta_max,rhum_min,rhum_max,shum_min,shum_max))
 
     def f_vrtbudget(self,level_below,level,level_above):
         """Calculate and save terms in vorticity budget at pressure level.
