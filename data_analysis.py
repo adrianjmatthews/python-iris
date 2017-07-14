@@ -1232,16 +1232,24 @@ class DataConverter(object):
 
     """
     
-    def __init__(self,descriptor,verbose=True):
-        """Initialise from descriptor dictionary."""
+    #def __init__(self,descriptor,verbose=True):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source','var_name','level',
+        'basedir'.
+
+        Optional keywords: 'file_mask'.
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
-        self.verbose=verbose
-        self.source=descriptor['source']
-        source_info(self)
-        self.var_name=descriptor['var_name']
+        #self.verbose=verbose
+        #self.source=descriptor['source']
+        #self.var_name=descriptor['var_name']
+        #self.level=descriptor['level']
+        #self.basedir=descriptor['basedir']
         self.name=var_name2long_name[self.var_name]
-        self.level=descriptor['level']
-        self.basedir=descriptor['basedir']
+        source_info(self)
         self.file_mask=False # Default value, overwrite if exists
         self.mask=False # Ditto
         if descriptor['file_mask']:
@@ -1592,18 +1600,37 @@ class TimeDomStats(object):
 
     """
 
-    def __init__(self,descriptor,verbose=False):
-        """Initialise from descriptor dictionary."""
+    #def __init__(self,descriptor,verbose=False):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source','var_name','level',
+        'basedir','tdomainid','filepre'.
+
+        Optional keywords: 'nmc','percentiles_null','max_day_shift',
+        'time_first','time_last'.
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
-        self.verbose=verbose
-        self.basedir=descriptor['basedir']
-        self.var_name=descriptor['var_name']
+        #self.verbose=verbose
+        #self.source=descriptor['source']
+        #self.var_name=descriptor['var_name']
+        #self.level=descriptor['level']
+        #self.basedir=descriptor['basedir']
+        #self.tdomainid=descriptor['tdomainid']
+        #self.filepre=descriptor['filepre']
+        #if 'nmc' in descriptor:
+        #    self.nmc=descriptor['nmc']
+        #if 'percentiles_null' in descriptor:
+        #    self.percentiles_null=descriptor['percentiles_null']
+        #if 'max_day_shift' in descriptor:
+        #    self.max_day_shift=descriptor['max_day_shift']
+        #if 'time_first' in descriptor:
+        #    self.time_first=descriptor['time_first']
+        #if 'time_last' in descriptor:
+        #    self.time_last=descriptor['time_last']
         self.name=var_name2long_name[self.var_name]
-        self.level=descriptor['level']
-        self.source=descriptor['source']
         source_info(self)
-        self.tdomainid=descriptor['tdomainid']
-        self.filepre=descriptor['filepre']
         self.filein1=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.filein1,self.name)
@@ -1614,16 +1641,6 @@ class TimeDomStats(object):
         self.fileout_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'.nc')
         self.fileout_lagged_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_lag.nc')
         self.fileout_dc=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_dc.nc')
-        if 'nmc' in descriptor:
-            self.nmc=descriptor['nmc']
-        if 'percentiles_null' in descriptor:
-            self.percentiles_null=descriptor['percentiles_null']
-        if 'max_day_shift' in descriptor:
-            self.max_day_shift=descriptor['max_day_shift']
-        if 'time_first' in descriptor:
-            self.time_first=descriptor['time_first']
-        if 'time_last' in descriptor:
-            self.time_last=descriptor['time_last']
         if self.verbose:
             print(self)
         
@@ -2011,19 +2028,26 @@ class TimeFilter(object):
     
     """
 
-    def __init__(self,descriptor,verbose=False):
+    #def __init__(self,descriptor,verbose=False):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source','var_name','level',
+        'basedir','filter','file_weights','filepre'
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
-        self.verbose=verbose
-        self.basedir=descriptor['basedir']
-        self.level=descriptor['level']
-        self.filter=descriptor['filter']
-        self.file_weights=descriptor['file_weights']
-        self.f_weights()
-        self.var_name=descriptor['var_name']
+        #self.verbose=verbose
+        #self.source=descriptor['source']
+        #self.var_name=descriptor['var_name']
+        #self.level=descriptor['level']
+        #self.basedir=descriptor['basedir']
+        #self.filter=descriptor['filter']
+        #self.file_weights=descriptor['file_weights']
+        #self.filepre=descriptor['filepre']
         self.name=var_name2long_name[self.var_name]
-        self.source=descriptor['source']
         source_info(self)
-        self.filepre=descriptor['filepre']
+        self.f_weights()
         self.filein1=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.filein1,self.name)
@@ -2199,15 +2223,22 @@ class TimeAverage(object):
 
     """
 
-    def __init__(self,descriptor,verbose=False):
+    #def __init__(self,descriptor,verbose=False):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source1','source2',,'var_name','level',
+        'basedir'.
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
-        self.verbose=verbose
-        self.basedir=descriptor['basedir']
-        self.var_name=descriptor['var_name']
+        #self.verbose=verbose
+        #self.source1=descriptor['source1']
+        #self.source2=descriptor['source2']
+        #self.var_name=descriptor['var_name']
+        #self.level=descriptor['level']
+        #self.basedir=descriptor['basedir']
         self.name=var_name2long_name[self.var_name]
-        self.level=descriptor['level']
-        self.source1=descriptor['source1']
-        self.source2=descriptor['source2']
         self.source=self.source2
         source_info(self)
         self.filein1=os.path.join(self.basedir,self.source1,'std',self.var_name+'_'+str(self.level)+'_'+self.wildcard+'.nc')
@@ -2366,15 +2397,22 @@ class Interpolate(object):
 
     """
 
-    def __init__(self,descriptor,verbose=False):
+    #def __init__(self,descriptor,verbose=False):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source1','source2','var_name',
+        'file_data_in','file_data_out'.
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
-        self.verbose=verbose
-        self.file_data_in=descriptor['file_data_in']
-        self.file_data_out=descriptor['file_data_out']
-        self.var_name=descriptor['var_name']
+        #self.verbose=verbose
+        #self.source1=descriptor['source1']
+        #self.source2=descriptor['source2']
+        #self.var_name=descriptor['var_name']
+        #self.file_data_in=descriptor['file_data_in']
+        #self.file_data_out=descriptor['file_data_out']
         self.name=var_name2long_name[self.var_name]
-        self.source1=descriptor['source1']
-        self.source2=descriptor['source2']
         self.source=self.source2
         source_info(self)
         with iris.FUTURE.context(netcdf_promote=True):
@@ -2490,19 +2528,26 @@ class Hovmoller(object):
     year numbers (if self.outfile_frequency is 'year').
     """
 
-    def __init__(self,descriptor,verbose=False):
+    #def __init__(self,descriptor,verbose=False):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source','var_name','level'
+        'basedir','filepre','band_name','band_val1','band_val2'.
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
-        self.verbose=verbose
-        self.basedir=descriptor['basedir']
-        self.source=descriptor['source']
-        self.var_name=descriptor['var_name']
+        #self.verbose=verbose
+        #self.source=descriptor['source']
+        #self.var_name=descriptor['var_name']
+        #self.level=descriptor['level']
+        #self.basedir=descriptor['basedir']
+        #self.filepre=descriptor['filepre']
+        #self.band_name=descriptor['band_name']
+        #self.band_val1=descriptor['band_val1']
+        #self.band_val2=descriptor['band_val2']
         self.name=var_name2long_name[self.var_name]
         source_info(self)
-        self.level=descriptor['level']
-        self.filepre=descriptor['filepre']
-        self.band_name=descriptor['band_name']
-        self.band_val1=descriptor['band_val1']
-        self.band_val2=descriptor['band_val2']
         self.file_data_in=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
         self.strhov='_hov_'+self.band_name[:3]+'_'+str(self.band_val1)+'_'+str(self.band_val2)
         self.file_data_hov=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+self.strhov+'_'+self.wildcard+'.nc')
@@ -2603,14 +2648,27 @@ class Wind(object):
 
     """
 
-    def __init__(self,descriptor,verbose=False):
+    #def __init__(self,descriptor,verbose=False):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source','level',
+        'basedir','filepre','flag_psi','flag_chi','flag_vrt','flag_div',
+        'flag_windspd'.
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
-        self.verbose=verbose
-        self.basedir=descriptor['basedir']
-        self.source=descriptor['source']
+        #self.verbose=verbose
+        #self.source=descriptor['source']
+        #self.level=descriptor['level']
+        #self.basedir=descriptor['basedir']
+        #self.filepre=descriptor['filepre']
+        #self.flag_psi=descriptor['flag_psi']
+        #self.flag_chi=descriptor['flag_chi']
+        #self.flag_vrt=descriptor['flag_vrt']
+        #self.flag_div=descriptor['flag_div']
+        #self.flag_wndspd=descriptor['flag_wndspd']
         source_info(self)
-        self.level=descriptor['level']
-        self.filepre=descriptor['filepre']
         self.file_data=os.path.join(self.basedir,self.source,'std','VAR_NAME_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
         # uwnd
         self.var_name_uwnd='uwnd'
@@ -2621,37 +2679,31 @@ class Wind(object):
         self.name_vwnd=var_name2long_name[self.var_name_vwnd]
         self.file_data_vwnd=self.file_data.replace('VAR_NAME',self.var_name_vwnd)
         # psi
-        self.flag_psi=descriptor['flag_psi']
         if self.flag_psi:
             self.var_name_psi='psi'
             self.name_psi=var_name2long_name[self.var_name_psi]
             self.file_data_psi=self.file_data.replace('VAR_NAME',self.var_name_psi)
         # chi
-        self.flag_chi=descriptor['flag_chi']
         if self.flag_chi:
             self.var_name_chi='chi'
             self.name_chi=var_name2long_name[self.var_name_chi]
             self.file_data_chi=self.file_data.replace('VAR_NAME',self.var_name_chi)
         # vrt
-        self.flag_vrt=descriptor['flag_vrt']
         if self.flag_vrt:
             self.var_name_vrt='vrt'
             self.name_vrt=var_name2long_name[self.var_name_vrt]
             self.file_data_vrt=self.file_data.replace('VAR_NAME',self.var_name_vrt)
         # div
-        self.flag_div=descriptor['flag_div']
         if self.flag_div:
             self.var_name_div='div'
             self.name_div=var_name2long_name[self.var_name_div]
             self.file_data_div=self.file_data.replace('VAR_NAME',self.var_name_div)
         # wndspd
-        self.flag_wndspd=descriptor['flag_wndspd']
         if self.flag_wndspd:
             self.var_name_wndspd='wndspd'
             self.name_wndspd=var_name2long_name[self.var_name_wndspd]
             self.file_data_wndspd=self.file_data.replace('VAR_NAME',self.var_name_wndspd)
         #
-        self.source=descriptor['source']
         source_info(self)
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_uwnd=iris.load(self.file_data_uwnd,self.name_uwnd)
@@ -2852,19 +2904,27 @@ class AnnualCycle(object):
     
     """
 
-    def __init__(self,descriptor,verbose=False):
+    #def __init__(self,descriptor,verbose=False):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source','var_name','level',
+        'basedir','year1','year2','time1','time2','nharm'.
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
-        self.verbose=verbose
-        self.source=descriptor['source']
-        source_info(self)
-        self.basedir=descriptor['basedir']
-        self.var_name=descriptor['var_name']
+        #self.verbose=verbose
+        #self.source=descriptor['source']
+        #self.var_name=descriptor['var_name']
+        #self.level=descriptor['level']
+        #self.basedir=descriptor['basedir']
+        #self.year1=descriptor['year1']
+        #self.year2=descriptor['year2']
+        #self.time1=descriptor['time1']
+        #self.time2=descriptor['time2']
+        #self.nharm=descriptor['nharm']
         self.name=var_name2long_name[self.var_name]
-        self.level=descriptor['level']
-        self.year1=descriptor['year1']
-        self.year2=descriptor['year2']
-        self.time1=descriptor['time1']
-        self.time2=descriptor['time2']
+        source_info(self)
         self.file_data_in=os.path.join(self.basedir,self.source,'std',
               self.var_name+'_'+str(self.level)+'_'+self.wildcard+'.nc')
         self.file_anncycle_raw=os.path.join(self.basedir,self.source,
@@ -2876,7 +2936,6 @@ class AnnualCycle(object):
         self.file_anncycle_smooth_leap=self.file_anncycle_smooth.replace('.','_leap.')
         self.file_anncycle_rm=os.path.join(self.basedir,self.source,'std',
               self.var_name+'_'+str(self.level)+'_rac_'+self.wildcard+'.nc')
-        self.nharm=descriptor['nharm']
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.file_data_in,self.name)
         # Get first time in input data if self.time1 not externally set
@@ -3377,13 +3436,20 @@ class GliderMission(object):
 
     """
 
-    def __init__(self,descriptor,verbose=False):
+    #def __init__(self,descriptor,verbose=False):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source_wildcard','var_name',
+        'basedir','mission'.
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
-        self.verbose=verbose
-        self.basedir=descriptor['basedir']
-        self.mission=descriptor['mission']
-        self.source_wildcard=descriptor['source_wildcard']
-        self.var_name=descriptor['var_name']
+        #self.verbose=verbose
+        #self.source_wildcard=descriptor['source_wildcard']
+        #self.var_name=descriptor['var_name']
+        #self.basedir=descriptor['basedir']
+        #self.mission=descriptor['mission']
         self.name=var_name2long_name[self.var_name]
         if self.mission==31:
             self.gliderids=[579,534,532,620,613]
@@ -3394,7 +3460,7 @@ class GliderMission(object):
         # self.gliders is a dictionary of glider objects
         self.gliders={}
         for gliderid in self.gliderids:
-            self.gliders[gliderid]=Glider(gliderid,self.descriptor,verbose=self.verbose)
+            self.gliders[gliderid]=Glider(gliderid,**descriptor)
         self.data_oi_pad_all={}
         self.data_oi_interp_lon={}
         if self.verbose:
@@ -3533,12 +3599,20 @@ class Glider(object):
 
     """Glider object."""
 
-    def __init__(self,gliderid,descriptor,verbose=False):
+    #def __init__(self,gliderid,descriptor,verbose=False):
+    def __init__(self,gliderid,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source_wildcard',
+        'basedir','mission'.
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
+        #self.verbose=verbose
+        #self.source_wildcard=descriptor['source_wildcard']
+        #self.basedir=descriptor['basedir']
+        #self.mission=descriptor['mission']
         self.gliderid=gliderid
-        self.basedir=descriptor['basedir']
-        self.mission=descriptor['mission']
-        self.source_wildcard=descriptor['source_wildcard']
         self.data_oi={}
         self.data_oi_pad={}
         self.verbose=verbose
@@ -3688,13 +3762,20 @@ class CubeDiagnostics(object):
 
     """
 
-    def __init__(self,descriptor,verbose=False):
+    #def __init__(self,descriptor,verbose=False):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','source','level'
+        'basedir'.
+        """
+        self.__dict__.update(descriptor)
         self.descriptor=descriptor
-        self.verbose=verbose
-        self.basedir=descriptor['basedir']
-        self.source=descriptor['source']
+        #self.verbose=verbose
+        #self.source=descriptor['source']
+        #self.level=descriptor['level']
+        #self.basedir=descriptor['basedir']
         source_info(self)
-        self.level=descriptor['level']
         # Empty dictionaries to fill later
         self.filein={}
         self.data_in={}
@@ -4437,28 +4518,41 @@ class XYGrid(object):
     
     """
     
-    def __init__(self,descriptor,verbose=True):
-        """Initialise."""
-        self.nx=self.nlon=descriptor['nx']
-        self.ny=self.nlat=descriptor['ny']
-        self.type_init=descriptor['type_init']
-        self.var_name=descriptor['var_name']
-        self.units=descriptor['units']
-        if self.type_init=='lonlat':
-            self.deltalon=descriptor['deltalon']
-            self.deltalat=descriptor['deltalat']
-            self.lon1=descriptor['lon1']
-            self.lat1=descriptor['lat1']
-        elif self.type_init=='xy':
-            self.deltax=descriptor['deltax']
-            self.deltay=descriptor['deltay']
-            self.x1=descriptor['x1']
-            self.y1=descriptor['y1']
-        else:
+    #def __init__(self,descriptor,verbose=True):
+    def __init__(self,**descriptor):
+        """Initialise from descriptor dictionary.
+
+        Compulsory keywords: 'verbose','var_name','nx','ny','type_init',
+        'units','xperiodic','yperiodic'.
+
+        Optional keywords: ['deltalon','deltalat','lon1','lat1'] or
+        ['deltax','deltay','x1','y1'].
+        """
+        self.__dict__.update(descriptor)
+        #self.verbose=verbose
+        #self.var_name=descriptor['var_name']
+        #self.nx=self.nlon=descriptor['nx']
+        #self.ny=self.nlat=descriptor['ny']
+        #self.type_init=descriptor['type_init']
+        #self.units=descriptor['units']
+        #self.xperiodic=descriptor['xperiodic']
+        #self.yperiodic=descriptor['yperiodic']
+        #if self.type_init=='lonlat':
+        #    self.deltalon=descriptor['deltalon']
+        #    self.deltalat=descriptor['deltalat']
+        #    self.lon1=descriptor['lon1']
+        #    self.lat1=descriptor['lat1']
+        #elif self.type_init=='xy':
+        #    self.deltax=descriptor['deltax']
+        #    self.deltay=descriptor['deltay']
+        #    self.x1=descriptor['x1']
+        #    self.y1=descriptor['y1']
+        #else:
+        #    raise ValueError('Invalid initial type.')
+        self.nlon=self.nx
+        self.nlat=self.ny
+        if self.type_init not in ['lonlat','xy']:
             raise ValueError('Invalid initial type.')
-        self.xperiodic=descriptor['xperiodic']
-        self.yperiodic=descriptor['yperiodic']
-        self.verbose=verbose
         # Create initial 2-d grid of zeros in numpy array
         self.grid=np.zeros((self.ny,self.nx))
         self.planet=Planet()
