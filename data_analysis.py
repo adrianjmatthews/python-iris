@@ -31,6 +31,7 @@ attribute).
 
 # All import statements here, before class definitions
 from __future__ import division, print_function, with_statement # So can run this in python2
+import copy
 import datetime
 import os.path
 import pdb
@@ -1132,7 +1133,7 @@ class TimeDomain(object):
                     dt1_rand=dt0_rand+timedelta
                     print(dt1_rand)
                 # Check randomised times are within allowable range
-                if (self.type=='single' and time_first<=dt0<=time_last) or (self.type=='event' and time_first<=dt0 and dt1<=time_last):
+                if (self.type=='single' and time_first<=dt0_rand<=time_last) or (self.type=='event' and time_first<=dt0_rand and dt1_rand<=time_last):
                     checked_valid_time_range=True
                     print('Randomised datetimes lie inside allowed range.  Proceed.')
                 else:
@@ -1634,9 +1635,14 @@ class TimeDomStats(object):
         self.filein1=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.filein1,self.name)
-        self.tdomain=TimeDomain(self.tdomainid,verbose=self.verbose)
-        self.tdomain.read_ascii()
-        self.tdomain.ascii2datetime()
+        try:
+            dummy1=self.tdomain
+            print('tdomain attribute already exists.')
+        except AttributeError:
+            self.tdomain=TimeDomain(self.tdomainid,verbose=self.verbose)
+            self.tdomain.read_ascii()
+            self.tdomain.ascii2datetime()
+            print('Create tdomain attribute.')
         self.tdomain.f_nevents()
         self.fileout_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'.nc')
         self.fileout_lagged_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_lag.nc')
@@ -1695,8 +1701,8 @@ class TimeDomStats(object):
         self.cube_event_ntimes=cube_event_ntimes
         self.units=x2.units
 
-    def f_time_mean(self):
-        """Calculate time mean over time domain and save to netcdf.
+    def f_time_mean(self,save=True):
+        """Calculate time mean over time domain and optionally save to netcdf.
 
         Calculate this by a weighted (cube_event_ntimes) mean of the
         cube_event_means.  Hence, each individual time (e.g., day) in the
@@ -1731,16 +1737,17 @@ class TimeDomStats(object):
         cm=iris.coords.CellMethod('point','time',comments='mean over time domain '+self.tdomain.idx)
         time_mean.add_cell_method(cm)
         self.time_mean=time_mean
-        with iris.FUTURE.context(netcdf_no_unlimited=True):
-            iris.save(self.time_mean,self.fileout_mean)
+        if save:
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.time_mean,self.fileout_mean)
 
-    def f_percentiles_null(self):
+    def f_percentiles_null(self,save_time_mean_mc=False,save_mean_percentiles_null=True):
         """Calculate percenticles of null distribution of the time mean.
 
         Perform a Monte Carlo simulation of size self.nmc to create
-        the null distribution of the time mean.  For each evaluation in the
-        Monte Carlo simulation,
-
+        the null distribution of the time mean.  For each evaluation
+        in the Monte Carlo simulation, create a randomized version of
+        the time domain.
         
         The time mean is then calculated for each of the self.nmc
         randomised time domains, building up a null distribution of
@@ -1751,7 +1758,12 @@ class TimeDomStats(object):
 
         Creates attributes:
 
-        self.mean_percentiles_null
+        self.time_mean_mc : iris cube with same dimensions as input
+        data plus an extra 'mc' simulation number dimension (axis 0),
+        containing the simulated null distribution of the time means.
+
+        self.mean_percentiles_null : iris cube containing selected
+        percentiles of the null distribution.
 
         """
         if self.verbose:
@@ -1764,7 +1776,8 @@ class TimeDomStats(object):
             print(ss.format(self))
         self.tdomain.time_domain_type()
         zfill_length=len(str(self.nmc))
-        # Loop over Monte Carlo simulations and create list of randomised time domains
+        # Loop over Monte Carlo simulations and create list of randomised
+        # time domains
         tdomains_mc=[]
         for imc in range(self.nmc):
             idxc=self.tdomainid+'_'+str(imc).zfill(zfill_length)
@@ -1772,8 +1785,50 @@ class TimeDomStats(object):
             tdomain_rand=self.tdomain.f_randomise_times(idxc,self.max_day_shift,self.time_first,self.time_last)
             tdomains_mc.append(tdomain_rand)
         self.tdomains_mc=tdomains_mc
+        # Loop over Monte Carlo simulations again and calculate
+        # time means from each randomised time domain
+        x2=iris.cube.CubeList([])
+        for imc in range(self.nmc):
+            # Create new instance of TimeDomStats object
+            print('imc: {0!s}'.format(imc))
+            descriptorc=copy.copy(self.descriptor)
+            descriptorc['tdomainid']=self.tdomains_mc[imc].idx
+            descriptorc['tdomain']=self.tdomains_mc[imc]
+            x1=TimeDomStats(**descriptorc)
+            # Calculate event means and time mean
+            x1.event_means()
+            x1.f_time_mean(save=False)
+            # Add auxiliary coordinate for simulation_number
+            mccoord=iris.coords.AuxCoord(float(imc),var_name='mc')
+            x1.time_mean.add_aux_coord(mccoord)
+            # Overwrite cell methods to allow merge later
+            x1.time_mean.cell_methods=()
+            # Append to cube list
+            x2.append(x1.time_mean)
+        x3=x2.merge_cube()
+        self.time_mean_mc=x3
+        # Calculate percentiles of null distribution of mean
+        x4=np.percentile(x3.data,self.percentiles_null,axis=0)
+        percoord=iris.coords.DimCoord(np.array(self.percentiles_null),var_name='percentile',units='%')
+        x5=create_cube(x4,x3,new_axis=percoord)
+        self.mean_percentiles_null=x5
+        # Save arrays if required
+        if save_time_mean_mc:
+            self.fileout_mean_mc=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_mc.nc')
+            print('Saving null distribution of mean to {0.fileout_mean_mc!s}'.format(self))
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.time_mean_mc,self.fileout_mean_mc)
+        if save_mean_percentiles_null:
+            self.fileout_mean_percentiles_null=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_percentiles.nc')
+            print('Saving percentiles of null distribution of mean to {0.fileout_mean_percentiles_null!s}'.format(self))
+            with iris.FUTURE.context(netcdf_no_unlimited=True):
+                iris.save(self.mean_percentiles_null,self.fileout_mean_percentiles_null)
 
-        # Loop over Monte Carlo simulations again and create list of time means from each randomised time domain
+
+
+
+
+
 
     def f_lagged_mean(self,lags=[0,]):
         """Calculate time-lagged means over time domain and save.
