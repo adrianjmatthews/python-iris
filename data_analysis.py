@@ -123,6 +123,9 @@ var_name2long_name={
     'tsc':'sea_water_conservative_temperature',
     'uwnd':'eastward_wind',
     'vrt':'atmosphere_relative_vorticity',
+    'vrt_horiz_adv':'minus_eastward_wind_times_zonal_derivative_of_atmosphere_relative_vorticity_minus_northward_wind_times_meridional_derivative_of_atmosphere_relative_vorticity',
+    'vrt_stretch':'minus_divergence_of_wind_times_atmospheric_total_vorticity',
+    'vrt_tilt':'minus_zonal_derivative_of_lagrangian_tendency_of_air_pressure_times_pressure_derivative_of_northward_wind_plus_meridional_derivative_of_lagrangian_tendency_of_air_pressure_times_pressure_derivative_of_zonal_wind',
     'vwnd':'northward_wind',
     'wndspd':'wind_speed',
     'wwnd':'upward_air_velocity',
@@ -1602,7 +1605,7 @@ class TimeDomStats(object):
     """
 
     #def __init__(self,descriptor,verbose=False):
-    def __init__(self,**descriptor):
+    def __init__(self,lazy_load=True,**descriptor):
         """Initialise from descriptor dictionary.
 
         Compulsory keywords: 'verbose','source','var_name','level',
@@ -1632,9 +1635,17 @@ class TimeDomStats(object):
         #    self.time_last=descriptor['time_last']
         self.name=var_name2long_name[self.var_name]
         source_info(self)
+        # Input data
         self.filein1=os.path.join(self.basedir,self.source,'std',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in=iris.load(self.filein1,self.name)
+        if not lazy_load:
+            # Force a hard load of entire input data set into memory
+            # Potentially speeds up processing
+            time_constraint=iris.Constraint(time=lambda cell: self.time_first <=cell<= self.time_last)
+            with iris.FUTURE.context(cell_datetime_objects=True):
+                self.data_in=self.data_in.extract(time_constraint)
+        # Time domain
         try:
             dummy1=self.tdomain
             print('tdomain attribute already exists.')
@@ -1644,6 +1655,7 @@ class TimeDomStats(object):
             self.tdomain.ascii2datetime()
             print('Create tdomain attribute.')
         self.tdomain.f_nevents()
+        # Output files
         self.fileout_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'.nc')
         self.fileout_lagged_mean=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_lag.nc')
         self.fileout_dc=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_dc.nc')
@@ -1741,35 +1753,35 @@ class TimeDomStats(object):
             with iris.FUTURE.context(netcdf_no_unlimited=True):
                 iris.save(self.time_mean,self.fileout_mean)
 
-    def f_percentiles_null(self,save_time_mean_mc=False,save_mean_percentiles_null=True):
-        """Calculate percenticles of null distribution of the time mean.
+    def f_time_mean_null_distribution_component(self):
+        """Calculate null distribution of the time mean and save.
 
-        Perform a Monte Carlo simulation of size self.nmc to create
-        the null distribution of the time mean.  For each evaluation
-        in the Monte Carlo simulation, create a randomized version of
-        the time domain.
+        Perform a Monte Carlo simulation of size self.nmc to create (a
+        partial component of) the null distribution of the time mean.
+        For each evaluation in the Monte Carlo simulation, create a
+        randomized version of the time domain.
         
         The time mean is then calculated for each of the self.nmc
         randomised time domains, building up a null distribution of
         the mean of length self.nmc.
 
-        The percentiles self.percentiles_null of this distribution are
-        then extracted and saved as self.mean_percentiles_null.
+        Note.  The total number of randomised simulations in the
+        overall Monte Carlo simulation should be at least 1000 to
+        ensure robustness in the tails of the null distribution.  To
+        run these sequentially is too time consuming.  Hence, small
+        batches of simulations should be run in parallel.  Use this
+        function together called from e.g., mean.py, together with
+        run_scripts_bsub.py to do this, looping over a variable called
+        NODE_NUMBER.  Each individual simulation runs self.nmc
+        realisations, hence the total size of the Monte Carlo
+        simulation is NODE_NUMBER*nmc which should be minimum
+        approximately 1000.
 
-        Creates attributes:
-
-        self.time_mean_mc : iris cube with same dimensions as input
-        data plus an extra 'mc' simulation number dimension (axis 0),
-        containing the simulated null distribution of the time means.
-
-        self.mean_percentiles_null : iris cube containing selected
-        percentiles of the null distribution.
-
+        Creates attributes: None.
         """
         if self.verbose:
-            ss=h1a+'f_percentiles_null \n'+\
+            ss=h1a+'f_time_mean_null_distribution_component \n'+\
                 'nmc: {0.nmc!s} \n'+\
-                'percentiles_null: {0.percentiles_null!s} \n'+\
                 'max_day_shift: {0.max_day_shift!s} \n'+\
                 'time_first: {0.time_first!s} \n'+\
                 'time_last: {0.time_last!s} \n'+h1b
@@ -1799,36 +1811,58 @@ class TimeDomStats(object):
             x1.event_means()
             x1.f_time_mean(save=False)
             # Add auxiliary coordinate for simulation_number
-            mccoord=iris.coords.AuxCoord(float(imc),var_name='mc')
+            index_mc=self.node_number*self.nmc+imc
+            print('index_mc: {0!s}'.format(index_mc))
+            mccoord=iris.coords.AuxCoord(float(index_mc),var_name='mc')
             x1.time_mean.add_aux_coord(mccoord)
             # Overwrite cell methods to allow merge later
             x1.time_mean.cell_methods=()
             # Append to cube list
             x2.append(x1.time_mean)
         x3=x2.merge_cube()
-        self.time_mean_mc=x3
+        # Save this component of the null distribution
+        fileout_mean_mc=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_mc_'+str(self.node_number).zfill(3)+'.nc')
+        print('Saving component of null distribution of mean to {0!s}'.format(fileout_mean_mc))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(x3,fileout_mean_mc)
+
+    def f_percentiles_null(self):
+        """Calculate percenticles of null distribution of time mean and save.
+
+        Read the null distribution of the time mean previously
+        calculated using f_time_mean_null_distribution_component().
+
+        The percentiles self.percentiles_null of this distribution are
+        then extracted and saved as self.mean_percentiles_null.
+
+        Creates attributes:
+
+        self.mean_percentiles_null : iris cube containing selected
+        percentiles of the null distribution.
+
+        """
+        if self.verbose:
+            ss=h1a+'f_percentiles_null \n'+\
+                'percentiles_null: {0.percentiles_null!s} \n'+h1b
+            print(ss.format(self))
+        # Read null distribution
+        filein_mc=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_mc_???.nc')
+        print('filein_mc: {0!s}'.format(filein_mc))
+        with iris.FUTURE.context(netcdf_promote=True):
+            x1=iris.load(filein_mc,self.name)
+        print('Null distribution - cube list: {0!s}'.format(x1))
+        x3=x1.concatenate_cube()
+        print('Null distribution - single cube: {0!s}'.format(x3))
         # Calculate percentiles of null distribution of mean
         x4=np.percentile(x3.data,self.percentiles_null,axis=0)
         percoord=iris.coords.DimCoord(np.array(self.percentiles_null),var_name='percentile',units='%')
         x5=create_cube(x4,x3,new_axis=percoord)
         self.mean_percentiles_null=x5
-        # Save arrays if required
-        if save_time_mean_mc:
-            self.fileout_mean_mc=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_mc.nc')
-            print('Saving null distribution of mean to {0.fileout_mean_mc!s}'.format(self))
-            with iris.FUTURE.context(netcdf_no_unlimited=True):
-                iris.save(self.time_mean_mc,self.fileout_mean_mc)
-        if save_mean_percentiles_null:
-            self.fileout_mean_percentiles_null=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_percentiles.nc')
-            print('Saving percentiles of null distribution of mean to {0.fileout_mean_percentiles_null!s}'.format(self))
-            with iris.FUTURE.context(netcdf_no_unlimited=True):
-                iris.save(self.mean_percentiles_null,self.fileout_mean_percentiles_null)
-
-
-
-
-
-
+        # Save percentiles
+        self.fileout_mean_percentiles_null=os.path.join(self.basedir,self.source,'processed',self.var_name+'_'+str(self.level)+self.filepre+'_'+self.tdomainid+'_percentiles.nc')
+        print('Saving percentiles of null distribution of mean to {0.fileout_mean_percentiles_null!s}'.format(self))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.mean_percentiles_null,self.fileout_mean_percentiles_null)
 
     def f_lagged_mean(self,lags=[0,]):
         """Calculate time-lagged means over time domain and save.
@@ -3834,7 +3868,11 @@ class CubeDiagnostics(object):
         # Empty dictionaries to fill later
         self.filein={}
         self.data_in={}
-        self.file_data_out=os.path.join(self.basedir,self.source,'std','VAR_NAME_'+str(self.level)+'_'+self.wildcard+'.nc')
+        try:
+            dummy=self.filepre
+        except AttributeError:
+            self.filepre=''
+        self.file_data_out=os.path.join(self.basedir,self.source,'std','VAR_NAME_'+str(self.level)+self.filepre+'_'+self.wildcard+'.nc')
         if self.verbose:
             print(self)        
 
@@ -3857,7 +3895,7 @@ class CubeDiagnostics(object):
         self.data_in.
         """
         name=var_name2long_name[var_name]
-        self.filein[var_name+'_'+str(level)]=os.path.join(self.basedir,self.source,'std',var_name+'_'+str(level)+'_'+self.wildcard+'.nc')
+        self.filein[var_name+'_'+str(level)]=os.path.join(self.basedir,self.source,'std',var_name+'_'+str(level)+self.filepre+'_'+self.wildcard+'.nc')
         with iris.FUTURE.context(netcdf_promote=True):
             self.data_in[var_name+'_'+str(level)]=iris.load(self.filein[var_name+'_'+str(level)],name)
         if verbose:
@@ -4473,6 +4511,74 @@ class CubeDiagnostics(object):
         with iris.FUTURE.context(netcdf_no_unlimited=True):
             iris.save(self.res_dvrtdt,fileout)
 
+    def f_vrtbudget_combine(self):
+        """Combine terms in the vorticity budget.
+
+        Read in individual vorticity budget terms, previously
+        calculated using f_vrtbudget().  Combine them together into
+        physically useful groups.
+
+        Calculate and create attributes:
+
+        self.vrt_horiz_adv : -u d zeta/dx -v d zeta/dy
+
+        self.vrt_stretch : -zeta D - fD
+
+        self.vrt_tilt : - d omega/dx * dv/dp +d omega/dy * du/dp
+
+        """
+        # Read in m_uwnd_dvrtx, m_vwnd_dvrtdy, m_vrt_div, m_ff_div,
+        # m_domegadx_dvwnddp, domegady_duwnddp
+        # for current time block and assign to attributes
+        self.time1,self.time2=block_times(self,verbose=self.verbose)
+        time_constraint=iris.Constraint(time=lambda cell: self.time1 <=cell<= self.time2)
+        with iris.FUTURE.context(cell_datetime_objects=True):
+            x1=self.data_in['m_uwnd_dvrtdx_'+str(self.level)].extract(time_constraint)
+            x2=self.data_in['m_vwnd_dvrtdy_'+str(self.level)].extract(time_constraint)
+            x3=self.data_in['m_vrt_div_'+str(self.level)].extract(time_constraint)
+            x4=self.data_in['m_ff_div_'+str(self.level)].extract(time_constraint)
+            x5=self.data_in['m_domegadx_dvwnddp_'+str(self.level)].extract(time_constraint)
+            x6=self.data_in['domegady_duwnddp_'+str(self.level)].extract(time_constraint)
+        self.m_uwnd_dvrtdx=x1.concatenate_cube()
+        self.m_vwnd_dvrtdy=x2.concatenate_cube()
+        self.m_vrt_div=x3.concatenate_cube()
+        self.m_ff_div=x4.concatenate_cube()
+        self.m_domegadx_dvwnddp=x5.concatenate_cube()
+        self.domegady_duwnddp=x6.concatenate_cube()
+        # Calculate horizontal advection of vorticity
+        self.vrt_horiz_adv=self.m_uwnd_dvrtdx+self.m_vwnd_dvrtdy
+        var_name='vrt_horiz_adv'
+        long_name=var_name2long_name[var_name]
+        self.vrt_horiz_adv.rename(long_name) # not a standard_name
+        self.vrt_horiz_adv.var_name=var_name
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.vrt_horiz_adv,fileout)
+        # Calculate vortex stretching
+        self.vrt_stretch=self.m_vrt_div+self.m_ff_div
+        var_name='vrt_stretch'
+        long_name=var_name2long_name[var_name]
+        self.vrt_stretch.rename(long_name) # not a standard_name
+        self.vrt_stretch.var_name=var_name
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.vrt_stretch,fileout)
+        # Calculate vortex tilting / twisting
+        self.vrt_tilt=self.m_domegadx_dvwnddp+self.domegady_duwnddp
+        var_name='vrt_tilt'
+        long_name=var_name2long_name[var_name]
+        self.vrt_tilt.rename(long_name) # not a standard_name
+        self.vrt_tilt.var_name=var_name
+        fileout=self.file_data_out.replace('VAR_NAME',var_name)
+        fileout=replace_wildcard_with_time(self,fileout)
+        print('fileout: {0!s}'.format(fileout))
+        with iris.FUTURE.context(netcdf_no_unlimited=True):
+            iris.save(self.vrt_tilt,fileout)
+        
 #==========================================================================
 
 class Planet(object):
